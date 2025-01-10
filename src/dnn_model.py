@@ -78,3 +78,67 @@ def kfold_split(bug_reports, samples, start, finish):
     test_bug_reports = [br for br in bug_reports if br["id"] in test_br_ids]
 
     return train_samples, test_bug_reports
+
+def train_dnn(i, num_folds, samples, start, finish, sample_dict, bug_reports, br2files_dict):
+    '''
+    Trains the dnn model and calculates top-k accuracies
+
+    Arguments:
+    i {integer} -- current fold number for printing information
+    num_folds {integer} -- total fold number for printing information
+    samples {list} -- samples from features.csv
+    start {integer} -- start index for test fold
+    finish {integer} -- start/last index for test fold
+    sample_dict {dictionary of dictionaries} -- list of all bug reports
+    br2files_dict {dictionary} -- dictionary for "bug report id - list of all related files in features.csv" 
+                                  pairs
+    '''
+
+    print("Fold: {} / {}".format(i + 1, num_folds), end="\r")
+
+    train_samples, test_bug_reports = kfold_split(bug_reports, samples, start, finish)
+    train_samples = oversample(train_samples)
+    np.random.shuffle(train_samples)
+    X_train, y_train = features_and_labels(train_samples)
+
+    clf = MLPRegressor(
+        solver= "sgd",
+        alpha=1e-5,
+        hidden_layer_sizes=(300,),
+        random_state=1,
+        max_iter=10000,
+        n_iter_no_change=30,
+    )
+    clf.fit(X_train, y_train.ravel())
+
+    acc_dict = topK_accuracy(test_bug_reports, sample_dict, br2files_dict, clf=clf)
+    return acc_dict
+
+def dnn_model_kfold(k=10):
+    '''
+    Run kfold cross validation in parallel
+
+    Arguments:
+    k {integer} -- the number of folds (default: {10})
+    '''
+
+    samples = csv2dict("../data/features.csv")
+
+    # These collections are speed up the process while calculating top-k accuracy
+    sample_dict, bug_reports, br2files_dict = helper_collections(samples)
+
+    np.random.shuffle(samples)
+
+    # K-fold cross validation in parallel
+    acc_dicts = Parallel(n_jobs=-2) (
+        # Uses all cores but one
+        delayed(train_dnn) (i, k, samples, start, step, sample_dict, bug_reports, br2files_dict)
+        for i, (start, step) in enumerate(kfold_split_indexes(k, len(samples))) 
+    )
+
+    # Calculating the average accuracy from all folds
+    avg_acc_dict = {}
+    for key in acc_dicts[0].keys():
+        avg_acc_dict[key] = round(sum([d[key] for d in acc_dicts]) / len(acc_dicts), 3)
+    
+    return avg_acc_dict
