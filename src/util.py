@@ -120,4 +120,126 @@ def top_k_wrong_files(right_files, br_raw_text, java_files, k=50):
     top_k_files = sorted(all_files, key=lambda x: x[1], reverse=True)[:k]
 
     return top_k_files
+
+def stem_tokens(tokens):
+    '''
+    Remove stop word and stem
+
+    Arguments:
+    tokens {list} -- tokens to stem
+    '''
+
+    stemmer = PorterStemmer()
+    removed_stopwords = [
+        stemmer.stem(item) for item in tokens if item not in stopwords.words("english")
+    ]
+    return removed_stopwords
+
+
+def normalize(text):
+    '''
+    Lowercase, remove punctuation, tokenize and stem
+
+    Arguments:
+        text {string} -- A text to normalize
+    '''
+
+    remove_punc_map = dict((ord(char), None) for char in string.punctuation)
+    removed_punc = text.lower().translate(remove_punc_map)
+    tokenized = word_tokenize(removed_punc)
+    stemmed_tokens = stem_tokens(tokenized)
+
+    return stemmed_tokens
+
+def cosine_sim(text1, text2):
+    '''
+    Cosine similarity with tfidf
+
+    Arguments:
+        text1 {string} -- first text
+        text2 {string} -- second text
+    '''
+    vectorizer = TfidfVectorizer(tokenizer=normalize, min_df=1, stop_words="english")
+    tfidf = vectorizer.fit_transform([text1, text2])
+    sim = ((tfidf * tfidf.T).A)[0,1]
+
+    return sim
+
+def get_all_source_code(start_dir):
+    '''
+    Creates corpus starting from 'start_dir'
+
+    Arguments:
+        start_dir {string} -- directory path to start
+    '''
+    files = {}
+    start_dir = os.path.normpath(start_dir)
+    for dir_, dir_names, file_names in os.walk(start_dir):
+        for filename in [f for f in file_names if f.endswith(".java")]:
+            src_name = os.path.join(dir_, filename)
+            with open(src_name, "r") as src_file:
+                src = src_file.read()
+
+            file_key = src_name.split(start_dir)[1]
+            file_key = file_key[len(os.sep) :]
+            files[file_key] = src 
+    return files 
+
+def get_months_between(d1, d2):
+    '''
+    Calculates the number of months betwween two date strings
+
+    Arguments:
+        d1 {datetime} -- date 1
+        d2 {datetime} -- date 2
+    '''  
+
+    diff_in_months = abs((d1.year - d2.year) * 12 + d1.month - d2.month)
+
+    return diff_in_months
+
+def most_recent_report(reports):
+    '''
+    Returns the most recently submitted previous report that shares a filename with the given bug report
+
+    Arguments:
+        reports {} --  find it's meaning! (remark)
+    '''
+
+    if len(reports) > 0:
+        return max(reports, key=lambda x: x.get("report_time"))
     
+    return None
+
+def previous_reports(filename, until, bug_reports):
+    '''
+    Returns a list of previously filed bug reports that share a file with the current bug report
+
+    Arguments:
+        filename {string} -- the name of the shared Java file
+        current_date {datetime} -- until date
+        bug_reports {list of dictionaries} -- list of all bug reports
+    '''
+    return [
+        br 
+        for br in bug_reports
+        if (filename in br["files"] and br["report_time"] < until)
+    ]
+
+def bug_fixing_recency(br, prev_reports):
+    '''
+    Calculates the bug fixing recency as defined by Lam et al.
+
+    Arguments:
+        br {} -- bug report
+        prev_reports {} -- previous bug reports (find the data types)
+    '''
+
+    mrr = most_recent_report(prev_reports)
+
+    if br and mrr:
+        return 1 / float (
+            get_months_between(br.get("report_time"), mrr.get("report_time")) + 1
+        )
+    
+    return 0
