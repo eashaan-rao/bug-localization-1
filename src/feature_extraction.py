@@ -38,7 +38,7 @@ def extract(i, br, bug_reports, java_src_dict):
             rvsm = cosine_sim(br_raw_text, src)
 
             # Class Name Similarity
-            cns = class_name_similarity(by_raw_text, src)
+            cns = class_name_similarity(br_raw_text, src)
 
             # Previous Reports
             prev_reports = previous_reports(java_file, br_date, bug_reports)
@@ -69,7 +69,7 @@ def extract_features():
 
     # Clone git repo to a local folder
     git_clone(
-        repo_url = "https://github.com/eclipse/eclipse.platform.ui.git",
+        repo_url = "https://github.com/eclipse-platform/eclipse.platform.ui.git",
         clone_folder = "../data/",
     )
 
