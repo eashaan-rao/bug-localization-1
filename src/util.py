@@ -369,4 +369,19 @@ def topk_accuracy(test_bug_reports, sample_dict, br2files_dict, clf=None):
 
     return acc_dict
 
+class CodeTimer:
+    '''
+    Keeps time from the initialization, and print the elapsed time at the end.
+    '''
+
+    def __init__(self, message=""):
+        self.message = message
+    
+    def __enter__(self):
+        print(self.message)
+        self.start = timeit.default_timer()
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.took = timeit.default_timer() - self.start
+        print("Finished in {0:0.5f} secs".format(self.took))
         
