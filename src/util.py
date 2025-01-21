@@ -315,7 +315,7 @@ def helper_collections(samples, only_rvsm=False):
     
     return sample_dict, bug_reports, br2files_dict
 
-def topk_accuracy(test_bug_reports, sample_dict, br2files_dict, clf=None):
+def topK_accuracy(test_bug_reports, sample_dict, br2files_dict, clf=None):
     '''
     Calculates top-k accuracies
 
