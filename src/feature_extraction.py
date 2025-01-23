@@ -1,5 +1,11 @@
 '''
 A Script for feature extraction
+
+Notes: 
+1. Eclipse_Platform_UI.txt it is taken from https://github.com/logpai/bughub/ -> https://github.com/logpai/bughub/tree/master/EclipsePlatform 
+   where it is stored in eclipse_platform.zip.
+2. Eclipse_Platform_UI.txt is a tsv file extracted by bughub owner from the xls file from the original dataset
+3. Things to do: instead of having a .txt file directly gathered the data from .xls, so write a appropriate method in this after once the complete current setup is started running.
 '''
 
 from util import *;
