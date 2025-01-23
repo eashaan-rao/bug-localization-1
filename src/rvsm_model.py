@@ -1,4 +1,4 @@
-from util import csv2dict, tsv2dict, helper_collections, topk_accuracy
+from util import csv2dict, tsv2dict, helper_collections, topK_accuracy
 from sklearn.neural_network import MLPRegressor
 from sklearn.model_selection import train_test_split, KFold
 import numpy as np
@@ -11,6 +11,6 @@ def rvsm_model():
     # These collections are speed up the process while calculating top-k accuracy
     sample_dict, bug_reports, br2files_dict = helper_collections(samples, True)
 
-    acc_dict = topk_accuracy(bug_reports, sample_dict, br2files_dict)
+    acc_dict = topK_accuracy(bug_reports, sample_dict, br2files_dict)
 
     return acc_dict
