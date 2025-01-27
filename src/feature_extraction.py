@@ -73,46 +73,61 @@ def extract_features():
     Clones the git repository and parallelizes the feature extraction process
     '''
 
-    # Clone git repo to a local folder
-    git_clone(
-        repo_url = "https://github.com/eclipse-platform/eclipse.platform.ui.git",
-        clone_folder = "../data/",
-    )
-
-    # Read bug reports from tab separated file
-    bug_reports = tsv2dict("../data/Eclipse_Platform_UI.txt")
-
-    # Read all java source files
-    java_src_dict = get_all_source_code("../data/eclipse.platform.ui/bundles/")
-
-    # Use all CPUs except one to speed up extraction and avoid computer lagging
-    batches = Parallel(n_jobs=cpu_count() - 1) (
-        delayed(extract)(i, br, bug_reports, java_src_dict)
-        for i, br in enumerate(bug_reports)
-    )
-
-    # Flatten features
-    features = [row for batch in batches for row in batch]
-
-    # Save features to a csv file
-    features_path = os.path.normpath("../data/features.csv")
-    with open(features_path, "w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(
-            [
-                "report_id",
-                "file",
-                "rVSM_similarity",
-                "collab_filter",
-                "classname_similarity",
-                "bug_recency",
-                "bug_frequency",
-                "match",
-            ]
-        )
-        for row in features:
-            writer.writerow(row)
-
     # Keep time while extracting features
     with CodeTimer("Feature Extraction"):
-        extract_features()
+
+        # Get the current directory (assuming the script is in the src folder)
+        current_dir = os.path.dirname(__file__)
+
+        # Navigate up one level from the src folder to reach the parent directory
+        parent_dir = os.path.abspath(os.path.join(current_dir, os.pardir))
+
+        # Construct the path to the data folder
+        data_folder_path = os.path.join(parent_dir, 'data')
+
+
+        # Clone git repo to a local folder
+        git_clone(
+            repo_url = "https://github.com/eclipse-platform/eclipse.platform.ui.git",
+            clone_folder = data_folder_path,
+        )
+
+        # Read bug reports from tab separated file
+        file_path = os.path.join(data_folder_path, 'Eclipse_Platform_UI.txt')
+        bug_reports = tsv2dict(file_path)
+
+        # Read all java source files
+        file_path = os.path.join(data_folder_path, 'eclipse.platform.ui/bundles/')
+        java_src_dict = get_all_source_code(file_path)
+
+        # Use all CPUs except one to speed up extraction and avoid computer lagging
+        batches = Parallel(n_jobs=cpu_count() - 1) (
+            delayed(extract)(i, br, bug_reports, java_src_dict)
+            for i, br in enumerate(bug_reports)
+        )
+
+        # Flatten features
+        features = [row for batch in batches for row in batch]
+
+        # Save features to a csv file
+        file_path = os.path.join(data_folder_path, 'features.csv')
+        features_path = os.path.normpath(file_path)
+        with open(features_path, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(
+                [
+                    "report_id",
+                    "file",
+                    "rVSM_similarity",
+                    "collab_filter",
+                    "classname_similarity",
+                    "bug_recency",
+                    "bug_frequency",
+                    "match",
+                ]
+            )
+            for row in features:
+                writer.writerow(row)
+
+    
+        
