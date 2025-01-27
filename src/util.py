@@ -10,6 +10,7 @@ import timeit
 import string
 import numpy as np
 from datetime import datetime
+import subprocess
 from nltk.tokenize import word_tokenize
 from nltk.stem import PorterStemmer
 from nltk.corpus import stopwords
@@ -23,18 +24,29 @@ def git_clone(repo_url, clone_folder):
     repo_url {string} -- url of git repository
     clone_folder {string} -- path of a local folder to clone the repository
     '''
-    repo_name = repo_url[repo_url.rfind("/") + 1 : -4]
-    if os.path.isdir(clone_folder + repo_name):
+    repo_name = os.path.basename(repo_url)
+    if repo_name.endswith(".git"):
+        repo_name = repo_name[:-4]
+
+    target_path = os.path.join(clone_folder, repo_name)
+    if os.path.isdir(target_path):
         print("Already cloned")
         return
     
-    cwd = os.getcwd()
+    # Ensure the clone folder exists
     if not os.path.isdir(clone_folder):
-        os.mkdir(clone_folder)
+        try:
+            os.mkdir(clone_folder)
+        except OSError as e:
+            print(f"Error creating directory {clone_folder}: {e}")
     
-    os.chdir(clone_folder)
-    os.system("git clone {}".format(repo_url))
-    os.chdir(cwd)
+    # Clone the repository
+    try:
+        subprocess.run(["git", "clone", repo_url, target_path], check=True)
+        print(f"Cloned {repo_url} into {target_path}")
+    except subprocess.CalledProcessError as e:
+        print(f"Error occurred while cloning the repository: {e}")
+
 
 def tsv2dict(tsv_path):
     '''
