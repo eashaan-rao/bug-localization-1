@@ -9,6 +9,7 @@ import random
 import timeit
 import string
 import numpy as np
+import pandas as pd
 from datetime import datetime
 import subprocess
 from nltk.tokenize import word_tokenize
@@ -290,36 +291,43 @@ def class_name_similarity(raw_text, source_code):
 
     return class_name_sim
 
-def helper_collections(samples, only_rvsm=False):
+def helper_collections(samples_df, only_rvsm=False):
     '''
     Generates helper function for calculations
 
     Arguments:
-        samples {list} -- samples from features.csv
+        samples_df {pd.DataFrame} -- Dataframe containing samples from features.csv
 
     keyword Arguments:
         only_rvsm {bool} -- If True only 'rvsm' features are added to 'sample_dict'. (default: {False}) 
     '''
 
     sample_dict = {}
-    for s in samples:
-        sample_dict[s["report_id"]] = []
+    # Initializa sample_dict with empty lists for each unique report_id
+    for report_id in samples_df["report_id"].unique():
+        sample_dict[report_id] = []
 
-    for s in samples:
+    # Iterate through the DataFrame rows
+    for _, row in samples_df.iterrows():
         temp_dict = {}
-        values = [float(s["rVSM_similarity"])]
+        values = [float(row["rVSM_similarity"])]
         if not only_rvsm:
             values += [
-                float(s["collab_filter"]),
-                float(s["classname_similarity"]),
-                float(s["bug_recency"]),
-                float(s["bug_frequency"]),
+                float(row["collab_filter"]),
+                float(row["classname_similarity"]),
+                float(row["bug_recency"]),
+                float(row["bug_frequency"]),
             ]
-        temp_dict[os.path.normpath(s["file"])] = values
+        temp_dict[os.path.normpath(row["file"])] = values
 
-        sample_dict[s["report_id"]].append(temp_dict)
+        sample_dict[row["report_id"]].append(temp_dict)
+
+    current_dir = os.path.dirname(__file__)
+    parent_dir = os.path.abspath(os.path.join(current_dir, os.pardir))
+    data_folder_path = os.path.join(parent_dir, 'data')
+    file_path = os.path.join(data_folder_path, 'Eclipse_Platform_UI.txt')
     
-    bug_reports = tsv2dict("../data/Eclipse_Platform_UI.txt")
+    bug_reports = tsv2dict(file_path)
     br2files_dict = {}
 
     for bug_report in bug_reports:

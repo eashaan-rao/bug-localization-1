@@ -1,16 +1,36 @@
-from util import csv2dict, tsv2dict, helper_collections, topK_accuracy
-from sklearn.neural_network import MLPRegressor
-from sklearn.model_selection import train_test_split, KFold
-import numpy as np
+from util import csv2dict, helper_collections, topK_accuracy
+import pandas as pd
+import os
 
 
-def rvsm_model():
-    samples = csv2dict("../data/features.csv")
-    rvsm_list = [float(sample["rVSM_similarity"]) for sample in samples]
+
+def rvsm_model(data_folder_path=None):
+    if data_folder_path is None:
+        current_dir = os.path.dirname(__file__)
+        parent_dir = os.path.abspath(os.path.join(current_dir, os.pardir))
+        data_folder_path = os.path.join(parent_dir, 'data')
+    
+    file_path = os.path.join(data_folder_path, 'features.csv')
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(f"File not found: {file_path}")
+    
+    df = pd.read_csv(file_path)
+    if "rVSM_similarity" not in df.columns:
+        raise ValueError(f"Missing 'rVSM_similarity' column in {file_path}")
+    
+    # samples = csv2dict(file_path)
+    rvsm_list = df["rVSM_similarity"].astype(float).tolist()
 
     # These collections are speed up the process while calculating top-k accuracy
-    sample_dict, bug_reports, br2files_dict = helper_collections(samples, True)
+    try:
+        sample_dict, bug_reports, br2files_dict = helper_collections(df, True)
+    except Exception as e:
+        raise
 
-    acc_dict = topK_accuracy(bug_reports, sample_dict, br2files_dict)
+    # Calculating topk accuracy
+    try:
+        acc_dict = topK_accuracy(bug_reports, sample_dict, br2files_dict)
+    except Exception as e:
+        raise
 
     return acc_dict
