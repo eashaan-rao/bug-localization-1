@@ -103,12 +103,9 @@ def clean_text(text):
     '''
 
     text = text.lower()
-    text = re.sub(r'\s+', ' ', text) # Normalize whitespace
-    text = re.sub(r'[^\w\s]', '', text) # Remove punctuation
-
-    # table = str.maketrans(dict.fromkeys(string.punctuation))
-    # clean_text = text.translate(table)
-    # word_list = [s.strip() for s in clean_text.strip().split()]
+    text = text.translate(str.maketrans('','', string.punctuation)) # Remove punctuation
+    text = re.sub(r'\s+', ' ', text).strip() # Normalize whitespace
+    
     return text
 
 def top_k_wrong_files(right_files, br_raw_text, java_files, k=50):
@@ -150,7 +147,7 @@ def tokenize_and_stem(text):
             text {string} -- Preprocessed Text
     '''
     tokens = word_tokenize(text)
-    stemmed_tokens = [STEMMER.stem(tokens) for token in tokens if token not in STOP_WORDS]
+    stemmed_tokens = [STEMMER.stem(token) for token in tokens if token.lower() not in STOP_WORDS]
     return stemmed_tokens
 
 
@@ -162,7 +159,7 @@ def cosine_sim(text1, text2):
         text1 {string} -- first text
         text2 {string} -- second text
     '''
-    vectorizer = TfidfVectorizer(preprocessor=clean_text, tokenizer=tokenize_and_stem)
+    vectorizer = TfidfVectorizer(preprocessor=clean_text, tokenizer=tokenize_and_stem, token_pattern=None)
     tfidf = vectorizer.fit_transform([text1, text2])
     sim = ((tfidf * tfidf.T).A)[0,1]
 
