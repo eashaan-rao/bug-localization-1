@@ -17,6 +17,10 @@ from nltk.stem import PorterStemmer
 from nltk.corpus import stopwords
 from sklearn.feature_extraction.text import TfidfVectorizer
 
+# Cache stopwords and stemmer
+STOP_WORDS = set(stopwords.words("english"))
+STEMMER = PorterStemmer()
+
 def git_clone(repo_url, clone_folder):
     '''
     Clones the git repo from 'repo_url' into 'clone_folder'
@@ -90,18 +94,22 @@ def csv2dict(csv_path):
 
     return csv_dict
 
-def clean_and_split(text):
+def clean_text(text):
     '''
-    Remove all punctuation and split text strings into lists of words
+    Lowercase, remove punctuation, and normalize whitespace
 
     Arguments:
     text {string} -- input text
     '''
 
-    table = str.maketrans(dict.fromkeys(string.punctuation))
-    clean_text = text.translate(table)
-    word_list = [s.strip() for s in clean_text.strip().split()]
-    return word_list
+    text = text.lower()
+    text = re.sub(r'\s+', ' ', text) # Normalize whitespace
+    text = re.sub(r'[^\w\s]', '', text) # Remove punctuation
+
+    # table = str.maketrans(dict.fromkeys(string.punctuation))
+    # clean_text = text.translate(table)
+    # word_list = [s.strip() for s in clean_text.strip().split()]
+    return text
 
 def top_k_wrong_files(right_files, br_raw_text, java_files, k=50):
     '''
@@ -134,35 +142,17 @@ def top_k_wrong_files(right_files, br_raw_text, java_files, k=50):
 
     return top_k_files
 
-def stem_tokens(tokens):
+def tokenize_and_stem(text):
     '''
-    Remove stop word and stem
+        Tokenize, remove stopwords, and stem. (combining stem_tokens() and normalize)
 
-    Arguments:
-    tokens {list} -- tokens to stem
+        Arguments:
+            text {string} -- Preprocessed Text
     '''
-
-    stemmer = PorterStemmer()
-    removed_stopwords = [
-        stemmer.stem(item) for item in tokens if item not in stopwords.words("english")
-    ]
-    return removed_stopwords
-
-
-def normalize(text):
-    '''
-    Lowercase, remove punctuation, tokenize and stem
-
-    Arguments:
-        text {string} -- A text to normalize
-    '''
-
-    remove_punc_map = dict((ord(char), None) for char in string.punctuation)
-    removed_punc = text.lower().translate(remove_punc_map)
-    tokenized = word_tokenize(removed_punc)
-    stemmed_tokens = stem_tokens(tokenized)
-
+    tokens = word_tokenize(text)
+    stemmed_tokens = [STEMMER.stem(tokens) for token in tokens if token not in STOP_WORDS]
     return stemmed_tokens
+
 
 def cosine_sim(text1, text2):
     '''
@@ -172,7 +162,7 @@ def cosine_sim(text1, text2):
         text1 {string} -- first text
         text2 {string} -- second text
     '''
-    vectorizer = TfidfVectorizer(tokenizer=normalize, min_df=1, stop_words="english")
+    vectorizer = TfidfVectorizer(preprocessor=clean_text, tokenizer=tokenize_and_stem)
     tfidf = vectorizer.fit_transform([text1, text2])
     sim = ((tfidf * tfidf.T).A)[0,1]
 
@@ -383,8 +373,13 @@ def topK_accuracy(test_bug_reports, sample_dict, br2files_dict, clf=None):
                     break
     
     acc_dict = {}
+    denominator = len(test_bug_reports) - negative_total
+    if denominator == 0:
+        print("Warning: No valid bug reports found in sample_dict. Returning empty accuracy dictionary.")
+        return acc_dict # Return an empty dictionary to prevent the error
+    
     for i, counter in enumerate(topk_counters):
-        acc = counter / (len(test_bug_reports) - negative_total)
+        acc = counter / denominator
         acc_dict[i + 1] += round(acc, 3)
 
     return acc_dict
