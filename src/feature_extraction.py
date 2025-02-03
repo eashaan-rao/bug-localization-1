@@ -95,10 +95,14 @@ def extract_features():
         # Read bug reports from tab separated file
         file_path = os.path.join(data_folder_path, 'Eclipse_Platform_UI.txt')
         bug_reports = tsv2dict(file_path)
+        print(bug_reports[:2]) # to veify the correctness
 
         # Read all java source files
         file_path = os.path.join(data_folder_path, 'eclipse.platform.ui/bundles/')
         java_src_dict = get_all_source_code(file_path)
+
+        print(list(java_src_dict.keys())[:5])
+        print(f"Total Java files found: {len(java_src_dict)}")
 
         # Use all CPUs except one to speed up extraction and avoid computer lagging
         batches = Parallel(n_jobs=cpu_count() - 1) (

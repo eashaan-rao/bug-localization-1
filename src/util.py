@@ -60,21 +60,28 @@ def tsv2dict(tsv_path):
     Arguments:
     tsv_path {string} -- path of the tsv file
     '''
+    with open(tsv_path, "r", encoding="utf-8") as file:
+        reader = csv.DictReader(file, delimiter="\t")
+        dict_list = []
+        for line in reader:
+            # Extract valid Java files, removing prefixes like "6:"
+            line["files"] = [
+                os.path.normpath(f.split(":",1)[-1][8:]) #remove any number prefix and 'bundles/'
+                for f in line["files"].strip().split()
+                if f.endswith(".java")
+            ]
 
-    reader = csv.DictReader(open(tsv_path, "r"), delimiter="\t")
-    dict_list = []
-    for line in reader:
-        line["files"] = [
-            os.path.normpath(f[8:])
-            for f in line["files"].strip().split()
-            if f.startswith("bundles/") and f.endswith(".java")
-        ]
-        line["raw_text"] = line["summary"] + line["description"]
-        line["report_time"] = datetime.strptime(
-            line["report_time"], "%Y-%m-%d %H:%M:%S"
-        )
+            # combine summary and description safely
+            line["raw_text"] = " ".join([line["summary"].strip() , line["description"].strip()])
 
-        dict_list.append(line)
+            # Conver report time, handling missing values
+            line["report_time"] = (
+                datetime.strptime(line["report_time"], "%Y-%m-%d %H:%M:%S")
+                if line["report_time"]
+                else None
+            )
+
+            dict_list.append(line)
     
     return dict_list
 
@@ -174,14 +181,27 @@ def get_all_source_code(start_dir):
     '''
     files = {}
     start_dir = os.path.normpath(start_dir)
-    for dir_, dir_names, file_names in os.walk(start_dir):
-        for filename in [f for f in file_names if f.endswith(".java")]:
-            src_name = os.path.join(dir_, filename)
-            with open(src_name, "r") as src_file:
-                src = src_file.read()
 
-            file_key = src_name.split(start_dir)[1]
-            file_key = file_key[len(os.sep) :]
+    for dir_, _, file_names in os.walk(start_dir):
+        for filename in file_names:
+            if not filename.endswith(".java"):
+                continue
+
+            src_name = os.path.join(dir_, filename)
+
+            # Read file safely
+            try:
+                with open(src_name, "r", encoding="utf-8", errors="ignore") as src_file:
+                    src = src_file.read()
+            except Exception as e:
+                print(f"Error reading {src_name}: {e}")
+                continue # skip problematic files
+
+            # Create file key (relative path without "bundles/")         
+            file_key = os.path.relpath(src_name, start_dir)
+            if file_key.startswith("bundles/"):
+                file_key = file_key[8:]
+
             files[file_key] = src 
     return files 
 
