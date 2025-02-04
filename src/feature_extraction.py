@@ -101,8 +101,38 @@ def extract_features():
         file_path = os.path.join(data_folder_path, 'eclipse.platform.ui/bundles/')
         java_src_dict = get_all_source_code(file_path)
 
-        print(list(java_src_dict.keys())[:5])
+        print(list(java_src_dict.keys())[:5]) # print first 5 keys to verify paths
+
+        # Print the first 5 keys and a short snippet of their content
+        for key in list(java_src_dict.keys())[:5]:
+            print(f"File: {key}\nContent: {java_src_dict[key][:200]}...\n")
+
+        # Check total files count
         print(f"Total Java files found: {len(java_src_dict)}")
+
+        # Pick a file from bug_reports and check if it exists in java_src_dict
+        sample_bug_report_file = bug_reports[0]["files"][0] # First file in first bug report
+
+        if sample_bug_report_file in java_src_dict:
+            print(f"Found! {sample_bug_report_file} in java_src_dict!")
+            print(f"Sample content:\n{java_src_dict[sample_bug_report_file][:200]}...")
+        else:
+            print(f"{sample_bug_report_file} is missing in java_src_dict!")
+
+        # Compare extracted paths from both sources (java_src_dict and bug_reports["files"])
+        bug_report_files = set(file for br in bug_reports for file in br["files"])
+        java_src_files = set(java_src_dict.keys())
+
+        # Find missing files
+        missing_files = bug_report_files - java_src_files
+        extra_files = java_src_files - bug_report_files
+
+        print(f"Files in bug_reports but missing in java_src_dict: {len(missing_files)}")
+        print(f"Files in java_src_dict but not in bug_report: {len(extra_files)}")
+
+        # Print a few missing files
+        print("Example missing files:", list(missing_files)[:5])
+        print("Example extra files: ", list(extra_files)[:5])
 
         # Use all CPUs except one to speed up extraction and avoid computer lagging
         batches = Parallel(n_jobs=cpu_count() - 1) (
