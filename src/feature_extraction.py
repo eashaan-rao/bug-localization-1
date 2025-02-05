@@ -13,6 +13,52 @@ from joblib import Parallel, delayed, cpu_count
 import csv
 import os
 
+# Helper functions
+
+def get_commit_before(timestamp, repo_dir):
+    '''
+    Finds the latest commit (hash) in the repository that is before the given timestamp.
+
+    Args:
+        timestamp (int or float) : UNIX timestamp (e.g., from bug report commit_timestamp)
+        repo_Dir (str): Path to the Git Repository
+
+    Returns:
+        str or None: Commit hash, or None if not found.
+    '''
+    # Convert UNIX timestamp to string "YYYY-MM-DD HH:MM:SS"
+    date_str = datetime.fromtimestamp(float(timestamp)).strftime("%Y-%m-%d %H:%M:%S")
+    cmd = f'git log --before="{date_str}" --pretty=format:"%H" -n 1'
+    try:
+        commit_hash = subprocess.check_output(cmd, shell=True, cwd=repo_dir).decode("utf-8").strip()
+        return commit_hash
+    except subprocess.CalledProcessError as e:
+        print(f"Error finding commit for timestamp {date_str}: {e}")
+        return None
+    
+def checkout_code_at_timestamp(timestamp, repo_dir):
+    '''
+    Checks out the repository at the commit corresponding to the given timestamp.
+
+    Args:
+        timestamp (int or float): UNIX timestamp.
+        repo_dir (str) : Path to the Git repository
+
+    Returns:
+        str or None: The commit hash that was checked out or None if an error occured.
+    
+    '''
+    commit_hash = get_commit_before(timestamp, repo_dir)
+    if commit_hash:
+        try:
+            subprocess.run(["git", "checkout", commit_hash], check=True, cwd=repo_dir)
+            return commit_hash
+        except subprocess.CalledProcessError as e:
+            return None
+    else:
+        return None
+
+
 def extract(i, br, bug_reports, java_src_dict):
     '''
     Extracts features for 50 wrong (randomly chosen) files for each right (buggy) fie for the given bug report
@@ -70,7 +116,8 @@ def extract(i, br, bug_reports, java_src_dict):
 
 def extract_features():
     '''
-    Clones the git repository and parallelizes the feature extraction process
+    Clones the git repository and parallelizes the feature extraction process.
+    Now integrates commit-based extraction to only load the source files referenced by each bug report
     '''
 
     # Keep time while extracting features
@@ -97,56 +144,86 @@ def extract_features():
         bug_reports = tsv2dict(file_path)
         print(bug_reports[:2]) # to veify the correctness
 
-        # Read all java source files
-        file_path = os.path.join(data_folder_path, 'eclipse.platform.ui/bundles/')
-        java_src_dict = get_all_source_code(file_path)
+        # Sort bug reports by commit_timestamp (or report time) so that we can process in chronological order
+        bug_reports.sort(key=lambda br: br["commit_timestamp"])
 
-        print(list(java_src_dict.keys())[:5]) # print first 5 keys to verify paths
+        # Define the path to the repository's bundles folder (this can change when you checkout different commits)
+        repo_bundles_dir = os.path.join(data_folder_path, 'eclipse.platform.ui', 'bundles')
 
-        # Print the first 5 keys and a short snippet of their content
-        for key in list(java_src_dict.keys())[:5]:
-            print(f"File: {key}\nContent: {java_src_dict[key][:200]}...\n")
+        features = []
+        current_commit = None # To track which commit is currently checked out
+        current_java_src_dict = None # Source code for the currently checked out commit
 
-        # Check total files count
-        print(f"Total Java files found: {len(java_src_dict)}")
+        for i, br in enumerate(bug_reports):
+            # Get the commit timestamp for the bug report (You can also use br['report_time'])
+            bug_ts = br["commit_timestamp"]
+            # Determine the desired commit hash for this bug report's timestamp
+            desired_commit = get_commit_before(bug_ts)
 
-        # Pick a file from bug_reports and check if it exists in java_src_dict
-        sample_bug_report_file = bug_reports[0]["files"][0] # First file in first bug report
+            # If the desired commit differs from the current one, cheout the new commit.
+            if desired_commit != current_commit:
+                checkout_code_at_timestamp(bug_ts)
+                cuurent_commit = desired_commit
+                # Reset the current source dictionary; we will re-read the files for this bug report
+                current_java_src_dict = get_relevant_source_code(br["files"], repo_bundles_dir)
 
-        if sample_bug_report_file in java_src_dict:
-            print(f"Found! {sample_bug_report_file} in java_src_dict!")
-            print(f"Sample content:\n{java_src_dict[sample_bug_report_file][:200]}...")
-        else:
-            print(f"{sample_bug_report_file} is missing in java_src_dict!")
+            # For this bug report, extract only the relevant Java files using the current repo snapshot.
+            # br["files"] should be alist of relative file paths that match the keys in the repository.
+            # Now extract features for this bug report using only the relevant files
+            feat = extract(i, br, bug_reports, current_java_src_dict)
+            features.extend(feat)
 
-        # Compare extracted paths from both sources (java_src_dict and bug_reports["files"])
-        bug_report_files = set(file for br in bug_reports for file in br["files"])
-        java_src_files = set(java_src_dict.keys())
 
-        # Find missing files
-        missing_files = bug_report_files - java_src_files
-        extra_files = java_src_files - bug_report_files
+        # # Read all java source files
+        # file_path = os.path.join(data_folder_path, 'eclipse.platform.ui/bundles/')
+        # java_src_dict = get_all_source_code(file_path)
 
-        print(f"Files in bug_reports but missing in java_src_dict: {len(missing_files)}")
-        print(f"Files in java_src_dict but not in bug_report: {len(extra_files)}")
+        # print(list(java_src_dict.keys())[:5]) # print first 5 keys to verify paths
 
-        # Print a few missing files
-        print("Example missing files:", list(missing_files)[:5])
-        print("Example extra files: ", list(extra_files)[:5])
+        # # Print the first 5 keys and a short snippet of their content
+        # for key in list(java_src_dict.keys())[:5]:
+        #     print(f"File: {key}\nContent: {java_src_dict[key][:200]}...\n")
 
-        # Use all CPUs except one to speed up extraction and avoid computer lagging
-        batches = Parallel(n_jobs=cpu_count() - 1) (
-            delayed(extract)(i, br, bug_reports, java_src_dict)
-            for i, br in enumerate(bug_reports)
-        )
+        # # Check total files count
+        # print(f"Total Java files found: {len(java_src_dict)}")
 
-        # Flatten features
-        features = [row for batch in batches for row in batch]
+        # # Pick a file from bug_reports and check if it exists in java_src_dict
+        # sample_bug_report_file = bug_reports[0]["files"][0] # First file in first bug report
+
+        # if sample_bug_report_file in java_src_dict:
+        #     print(f"Found! {sample_bug_report_file} in java_src_dict!")
+        #     print(f"Sample content:\n{java_src_dict[sample_bug_report_file][:200]}...")
+        # else:
+        #     print(f"{sample_bug_report_file} is missing in java_src_dict!")
+
+        # # Compare extracted paths from both sources (java_src_dict and bug_reports["files"])
+        # bug_report_files = set(file for br in bug_reports for file in br["files"])
+        # java_src_files = set(java_src_dict.keys())
+
+        # # Find missing files
+        # missing_files = bug_report_files - java_src_files
+        # extra_files = java_src_files - bug_report_files
+
+        # print(f"Files in bug_reports but missing in java_src_dict: {len(missing_files)}")
+        # print(f"Files in java_src_dict but not in bug_report: {len(extra_files)}")
+
+        # # Print a few missing files
+        # print("Example missing files:", list(missing_files)[:5])
+        # print("Example extra files: ", list(extra_files)[:5])
+
+        # # Use all CPUs except one to speed up extraction and avoid computer lagging
+        # batches = Parallel(n_jobs=cpu_count() - 1) (
+        #     delayed(extract)(i, br, bug_reports, java_src_dict)
+        #     for i, br in enumerate(bug_reports)
+        # )
+
+        # # Flatten features
+        # features = [row for batch in batches for row in batch]
 
         # Save features to a csv file
-        file_path = os.path.join(data_folder_path, 'features.csv')
-        features_path = os.path.normpath(file_path)
-        with open(features_path, "w", newline="") as f:
+        features_csv_path = os.path.join(data_folder_path, 'features.csv')
+        features_csv_path = os.path.normpath(features_csv_path)
+        with open(features_csv_path, "w", newline="") as f:
             writer = csv.writer(f)
             writer.writerow(
                 [
