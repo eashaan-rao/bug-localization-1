@@ -172,6 +172,33 @@ def cosine_sim(text1, text2):
 
     return sim
 
+def get_relevant_source_code(relevant_files, base_dir):
+    '''
+    Extract only the Java source files that are referenced in the bug report.
+
+    Arguments:
+        relevant_files {list} -- List of relative file paths from the bug report
+        base_dir {string} -- Path to the repository's bundles directory (the checked-out version).
+    Returns:
+        dict -- A dictionary mapping file paths to their content
+    '''
+
+    source_dict = {}
+    for file in relevant_files:
+        # Construct full path - make sure the file path format matches what is in the repo
+        file_path = os.path.join(base_dir, file)
+        if os.path.exists(file_path):
+            try:
+                with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                    source_dict[file] = f.read()
+            except Exception as e:
+                print(f"Error reading {file_path}: {e}")
+        
+        else:
+            #print missing files 
+            print(f"File not found in repo: {file_path}")
+    return source_dict
+
 def get_all_source_code(start_dir):
     '''
     Creates corpus starting from 'start_dir'
