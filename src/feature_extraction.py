@@ -12,8 +12,19 @@ from util import *;
 from joblib import Parallel, delayed, cpu_count
 import csv
 import os
+import time
+from datetime import datetime
+import subprocess
 
 # Helper functions
+
+class CodeTimer:
+    def __init__(self, name="Code Timer"):
+        self.name = name
+    def __enter__(self):
+        self.start = time.time()
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        elapsed = time.time() - self.start
 
 def get_commit_before(timestamp, repo_dir):
     '''
@@ -66,8 +77,11 @@ def extract(i, br, bug_reports, java_src_dict):
     Arguments:
      i {integer} -- index for printing information
      br {dictionary} -- Given Bug Report
-     bug_reports {list of dictionaries} -- All bug reports
-     java_src_dict {dictionary} -- A dictionary of java source code
+     bug_reports {list} -- List of all bug reports
+     java_src_dict {dictionary} -- A dictionary of java source code (only the relevant files)
+
+    Returns:
+        list: List of featue rows
     '''
 
     print("Bug report: {}/{}".format(i + 1, len(bug_reports)), end="\r")
@@ -109,15 +123,17 @@ def extract(i, br, bug_reports, java_src_dict):
             for java_file, rvsm, cns in top_k_wrong_files ( br_files, br_raw_text, java_src_dict):
                 features.append([br_id, java_file, rvsm, cfs, cns, bfr, bff, 0])
         
-        except:
-            pass
+        except Exception as e:
+            print(f"Error processing bug report {br_id} for file {java_file}: {e}")
+            continue
 
     return features
 
 def extract_features():
     '''
-    Clones the git repository and parallelizes the feature extraction process.
-    Now integrates commit-based extraction to only load the source files referenced by each bug report
+    Main pipeline for feature extraction. Clones the repository, reads bug reports,
+    groups bug reports by commit, checks out the repository at the relevant commits,
+    and extracts features only for the relevant Java files.
     '''
 
     # Keep time while extracting features
@@ -148,30 +164,63 @@ def extract_features():
         bug_reports.sort(key=lambda br: br["commit_timestamp"])
 
         # Define the path to the repository's bundles folder (this can change when you checkout different commits)
-        repo_bundles_dir = os.path.join(data_folder_path, 'eclipse.platform.ui', 'bundles')
+        repo_dir = os.path.join(data_folder_path, "eclipse.platform.ui")
+        repo_bundles_dir = os.path.join(repo_dir, 'bundles')
 
         features = []
-        current_commit = None # To track which commit is currently checked out
-        current_java_src_dict = None # Source code for the currently checked out commit
 
-        for i, br in enumerate(bug_reports):
-            # Get the commit timestamp for the bug report (You can also use br['report_time'])
-            bug_ts = br["commit_timestamp"]
-            # Determine the desired commit hash for this bug report's timestamp
-            desired_commit = get_commit_before(bug_ts)
+        # Group bug reports by the commit hash determined from each bug report timestamp.
+        commit_groups = {}
+        for br in bug_reports:
+            ts = br["commit_timestamp"]
+            commit_hash = get_commit_before(ts, repo_dir)
+            if not commit_hash:
+                print(f"No commit found for bug report ID {br['id']}. Skipping")
+                continue
+            commit_groups.setdefault(commit_hash, []).append(br)
+        
+        print(f"Grouped bug reports into {len(commit_groups)} commit groups.")
 
-            # If the desired commit differs from the current one, cheout the new commit.
-            if desired_commit != current_commit:
-                checkout_code_at_timestamp(bug_ts)
-                cuurent_commit = desired_commit
-                # Reset the current source dictionary; we will re-read the files for this bug report
-                current_java_src_dict = get_relevant_source_code(br["files"], repo_bundles_dir)
+        # Process each group: checkout the commit once and then extract features for each bug report.
+        for commit_hash, group in commit_groups.items():
+            print(f"Processing group for commit {commit_hash} with {len(group)} bug reports.")
+            try:
+                subprocess.run(["git", "checkout", commit_hash], check=True, cwd=repo_dir)
+            except subprocess.CalledProcessError as e:
+                print(f"Error checking out commit {commit_hash}: {e}")
+                continue
 
-            # For this bug report, extract only the relevant Java files using the current repo snapshot.
-            # br["files"] should be alist of relative file paths that match the keys in the repository.
-            # Now extract features for this bug report using only the relevant files
-            feat = extract(i, br, bug_reports, current_java_src_dict)
-            features.extend(feat)
+            # For each bug report in this commit group:
+            for i, br in enumerate(group):
+                # Extract only the relevant Java files for this bug report.
+                java_src_dict = get_relevant_source_code(br["files"], repo_bundles_dir)
+                features.extend(extract(i, br, bug_reports, java_src_dict))
+
+
+        '''
+        Commenting this part of the code till I make further changes...
+        '''
+        # current_commit = None # To track which commit is currently checked out
+        # current_java_src_dict = None # Source code for the currently checked out commit
+
+        # for i, br in enumerate(bug_reports):
+        #     # Get the commit timestamp for the bug report (You can also use br['report_time'])
+        #     bug_ts = br["commit_timestamp"]
+        #     # Determine the desired commit hash for this bug report's timestamp
+        #     desired_commit = get_commit_before(bug_ts)
+
+        #     # If the desired commit differs from the current one, cheout the new commit.
+        #     if desired_commit != current_commit:
+        #         checkout_code_at_timestamp(bug_ts)
+        #         cuurent_commit = desired_commit
+        #         # Reset the current source dictionary; we will re-read the files for this bug report
+        #         current_java_src_dict = get_relevant_source_code(br["files"], repo_bundles_dir)
+
+        #     # For this bug report, extract only the relevant Java files using the current repo snapshot.
+        #     # br["files"] should be alist of relative file paths that match the keys in the repository.
+        #     # Now extract features for this bug report using only the relevant files
+        #     feat = extract(i, br, bug_reports, current_java_src_dict)
+        #     features.extend(feat)
 
 
         # # Read all java source files
@@ -240,5 +289,6 @@ def extract_features():
             for row in features:
                 writer.writerow(row)
 
+        print(f"Feature extraction complete. Features saved to {features_csv_path}")
     
         
