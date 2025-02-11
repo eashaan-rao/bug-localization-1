@@ -36,108 +36,133 @@ class CodeTimer:
         elapsed = time.time() - self.start
         print(f"{self.name} took {elapsed:.2f} seconds")
 
-def get_commit_before(timestamp, repo_dir):
+def get_parent_commit(commit_sha, repo_dir):
     '''
-    Finds the latest commit (hash) in the repository that is before the given timestamp.
+    Finds the immediate parent commit of the given commit SHA.
 
     Args:
-        timestamp (int or float) : UNIX timestamp (e.g., from bug report commit_timestamp)
-        repo_Dir (str): Path to the Git Repository
+        commit_sha (str): The commit hash to find the parent of.
+        repo_dir (str): Path to the Git repository.
 
     Returns:
-        str or None: Commit hash, or None if not found.
+        str or None: Parent commit hash, or None if not found.
     '''
-    # Convert UNIX timestamp to string "YYYY-MM-DD HH:MM:SS"
-    date_str = datetime.fromtimestamp(float(timestamp)).strftime("%Y-%m-%d %H:%M:%S")
-    cmd =["git", "rev-list", "-n", "1", "--before", date_str, "HEAD"]
+    cmd =["git", "rev-parse", f"{commit_sha}^"]
     try:
-        commit_hash = subprocess.check_output(cmd, shell=True, cwd=repo_dir).decode("utf-8").strip()
-        return commit_hash
-    except subprocess.CalledProcessError as e:
-        print(f"Error finding commit for timestamp {date_str}: {e}")
+        parent_commit = subprocess.check_output(cmd, cwd=repo_dir).decode("utf-8").strip()
+        return parent_commit
+    except subprocess.CalledProcessError:
+        print(f"Error: Could not find parent commt for {commit_sha}.")
         return None
     
-def checkout_code_at_timestamp(timestamp, repo_dir):
+def checkout_code_at_commit(commit_sha, repo_dir):
     '''
-    Checks out the repository at the commit corresponding to the given timestamp.
+    Checks out the repository at the buggy version (one commit before the given SHA)
 
     Args:
-        timestamp (int or float): UNIX timestamp.
+        commit_sha (str): The fix commit hash.
         repo_dir (str) : Path to the Git repository
 
     Returns:
-        str or None: The commit hash that was checked out or None if an error occured.
+        bool: True if checkout was successful, False otherwise
     
     '''
-    commit_hash = get_commit_before(timestamp, repo_dir)
-    if commit_hash:
-        try:
-            subprocess.run(["git", "checkout", commit_hash], check=True, cwd=repo_dir)
-            return commit_hash
-        except subprocess.CalledProcessError as e:
-            return None
-    else:
-        return None
-
-
-def extract(i, br, bug_reports, java_src_dict):
+    parent_commit = get_parent_commit(commit_sha, repo_dir)
+    if not parent_commit:
+        print(f"Skipping {commit_sha} as no parent commit found.")
+        return False
+    
+    try:
+        subprocess.run(["git", "checkout", parent_commit], check=True, cwd=repo_dir)
+        print(f"Checked out buggy version: {parent_commit} (before fix {commit_sha})")
+        return True
+    except subprocess.CalledProcessError as e:
+        print(f"Error Checking out {parent_commit}: {e}")
+        return False
+    
+    
+def get_all_java_files(repo_bundles_dir):
     '''
-    Extracts features for 50 wrong (randomly chosen) files for each right (buggy) fie for the given bug report
+        Recursively finds all Java source files in the given repository directory.
 
-    Arguments:
-     i {integer} -- index for printing information
-     br {dictionary} -- Given Bug Report
-     bug_reports {list} -- List of all bug reports
-     java_src_dict {dictionary} -- A dictionary of java source code (only the relevant files)
+        Args:
+            repo_bundles_dir (str) : Path to the source code directory
+
+        Returns:
+            list: list of absolute paths of Java source files
+    '''
+    java_files = []
+    for root, _, files in os.walk(repo_bundles_dir):
+        for file in files:
+            if file.endswith(".java"):
+                java_files.append(os.path.join(root, file))
+    return java_files
+
+def read_file(file_path):
+    '''
+    Reads the contents of a Java source file.
+
+    Args:
+        file_path (str) : Path to the Java file
 
     Returns:
-        list: List of featue rows
+        str: Content of the file as a string, or an empty string if there's an error 
+    '''
+    try:
+        with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+            return f.read()
+    except Exception as e:
+        print(f"Error reading file {file_path}: {e}")
+        return ""
+
+
+def extract_features_for_bug_report(br, buggy_files, indexed_non_buggy):
+    '''
+    Extract features for a single bug report
+    '''
+    features = []
+    br_id, br_text = br["id"], br["raw_text"]
+
+    for file in br['files']:
+        if file in buggy_files:
+            src = read_file(file)
+            features.appen(compute_features(br_id, file, br_text, src, 1))
+
+        non_buggy_sample = random.sample(list(indexed_non_buggy.items()), min(50, len(indexed_non_buggy)))
+        for file, src in non_buggy_sample:
+            features.append(compute_features(br_id, file, br_text, src, 0))
+    
+    return features
+
+def compute_features(br_id, file, br_text, src, label):
+    '''
+        compute all six features
     '''
 
-    print("Bug report: {}/{}".format(i + 1, len(bug_reports)), end="\r")
+    try:
+        # rVSM Text Similarity
+        rvsm = cosine_sim(br_text, src)
 
-    br_id = br["id"]
-    br_date = br["report_time"]
-    br_files = br["files"]
-    br_raw_text = br["raw_text"]
+        # Class Name Similarity
+        cns = class_name_similarity(br_text, src)
 
-    features = []
+        # Previous Reports
+        prev_reports = previous_reports(file, br_text)
 
-    for java_file in br_files:
-        java_file = os.path.normpath(java_file)
+        # Collaborative Filter Score
+        cfs = collaborative_filtering_score(br_text, prev_reports)
 
-        try:
-            # Source code of the JAVA file
-            src = java_src_dict[java_file]
+        # Bug Fixing Recency
+        bfr = bug_fixing_recency(file, prev_reports)
 
-            # rVSM Text Similarity
-            rvsm = cosine_sim(br_raw_text, src)
+        # Bug Fixing Frequency
+        bff = len(prev_reports)
+    
+    except Exception as e:
+        print(f"Error processing bug report {br_id} for file {file}: {e}")
+            
 
-            # Class Name Similarity
-            cns = class_name_similarity(br_raw_text, src)
-
-            # Previous Reports
-            prev_reports = previous_reports(java_file, br_date, bug_reports)
-
-            # Collaborative Filter Score
-            cfs = collaborative_filtering_score(br_raw_text, prev_reports)
-
-            # Bug Fixing Recency
-            bfr = bug_fixing_recency(br, prev_reports)
-
-            # Bug Fixing Frequency
-            bff = len(prev_reports)
-
-            features.append([br_id, java_file, rvsm, cfs, cns, bfr, bff, 1])
-
-            for java_file, rvsm, cns in top_k_wrong_files ( br_files, br_raw_text, java_src_dict):
-                features.append([br_id, java_file, rvsm, cfs, cns, bfr, bff, 0])
-        
-        except Exception as e:
-            print(f"Error processing bug report {br_id} for file {java_file}: {e}")
-            continue
-
-    return features
+    return [br_id, file, rvsm, cfs, cns, bfr, bff, label]
 
 def extract_features():
     '''
@@ -176,16 +201,16 @@ def extract_features():
 
 
         # Sort bug reports by commit_timestamp (or report time) so that we can process in chronological order
-        bug_reports.sort(key=lambda br: br["commit_timestamp"])
+        bug_reports.sort(key=lambda br: float(br["commit_timestamp"]))
 
-        # Group bug reports by the commit hash determined from each bug report timestamp.
+        # Group bug reports by the commit hash .
         commit_groups = defaultdict(list)
         for br in bug_reports:
-            commit_hash = get_commit_before(br["commit_timestamp"], repo_dir)
-            if not commit_hash:
-                print(f"No commit found for bug report ID {br['id']}. Skipping")
+            commit_sha = br["commit"]
+            if not commit_sha:
+                print(f"No commit SHA found for bug report ID {br['id']}. Skipping")
                 continue
-            commit_groups[commit_hash].append(br)
+            commit_groups[commit_sha].append(br)
         
         print(f"Grouped bug reports into {len(commit_groups)} commit groups.")
 
@@ -193,46 +218,53 @@ def extract_features():
         indexed_non_buggy = {}
 
         # Process each group: checkout the commit once and then extract features for each bug report.
-        for commit_hash, group in commit_groups.items():
-            if not checkout_code_at_timestamp(group[0]["commit_timestamp"], repo_dir):
+        for commit_sha, group in commit_groups.items():
+            print(f"Processing group for commit {commit_sha} with {len(group)} bug reports.")
+
+            # Get the parent commit to extract the buggy version
+            if not checkout_code_at_commit(commit_sha, repo_dir):
+                print(f"Skipping commit {commit_sha} due to checkout failures")
                 continue
 
             buggy_files = set()
             for br in group:
-                for file in br["files"]:
-                    buggy_files.add(file)
+                if "files" in br and br["files"]:
+                    for file in br["files"]:
+                        buggy_files.add(os.path.join(repo_bundles_dir, file))
 
             non_buggy_files = {
-                f for f in get_all_java_file(repo_bundles_dir) if f not in buggy_files
+                f for f in get_all_java_files(repo_bundles_dir) if f not in buggy_files
             }
-            indexed_non_buggy.update({f: read_file(f) for f in non_buggy_files})
+            for f in non_buggy_files:
+                    if f not in indexed_non_buggy:
+                        indexed_non_buggy[f] = read_file(f)
 
             for br in group:
                 features = extract_features_for_bug_report(br, buggy_files, indexed_non_buggy)
                 all_features.extend(features)
 
-            save_features_to_csv(all_features, os.path.join(data_folder_path, 'feature.csv'))
+            save_features_to_csv(all_features, os.path.join(data_folder_path, 'features.csv'))
 
-        # Save features to a csv file
-        features_csv_path = os.path.join(data_folder_path, 'features.csv')
-        features_csv_path = os.path.normpath(features_csv_path)
-        with open(features_csv_path, "w", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow(
-                [
-                    "report_id",
-                    "file",
-                    "rVSM_similarity",
-                    "collab_filter",
-                    "classname_similarity",
-                    "bug_recency",
-                    "bug_frequency",
-                    "match",
-                ]
-            )
-            for row in features:
-                writer.writerow(row)
+def save_features_to_csv(features, path):
+    '''
+    Save features to a features.csv file
+    '''
+    with open(path, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(
+            [
+                "report_id",
+                "file",
+                "rVSM_similarity",
+                "collab_filter",
+                "classname_similarity",
+                "bug_recency",
+                "bug_frequency",
+                "match",
+            ]
+        )
+        writer.writerows(features)
 
-        print(f"Feature extraction complete. Features saved to {features_csv_path}")
+    print(f"Feature extraction complete. Features saved to {path}")
     
         
