@@ -116,7 +116,7 @@ def read_file(file_path):
         return ""
 
 
-def extract_features_for_bug_report(br, buggy_files, indexed_non_buggy):
+def extract_features_for_bug_report(br, buggy_files, indexed_non_buggy, bug_reports):
     '''
     Extract features for a single bug report
     '''
@@ -126,15 +126,15 @@ def extract_features_for_bug_report(br, buggy_files, indexed_non_buggy):
     for file in br['files']:
         if file in buggy_files:
             src = read_file(file)
-            features.appen(compute_features(br_id, file, br_text, src, 1))
+            features.append(compute_features(br_id, file, br_text, src, 1))
 
         non_buggy_sample = random.sample(list(indexed_non_buggy.items()), min(50, len(indexed_non_buggy)))
         for file, src in non_buggy_sample:
-            features.append(compute_features(br_id, file, br_text, src, 0))
+            features.append(compute_features(bug_reports, br_id, file, br_text, src, 0))
     
     return features
 
-def compute_features(br_id, file, br_text, src, label):
+def compute_features(bug_reports, br_id, file, br_text, src, label):
     '''
         compute all six features
     '''
@@ -147,7 +147,7 @@ def compute_features(br_id, file, br_text, src, label):
         cns = class_name_similarity(br_text, src)
 
         # Previous Reports
-        prev_reports = previous_reports(file, br_text)
+        prev_reports = previous_reports(file, br_text, bug_reports) #change br_text to report_timestamp
 
         # Collaborative Filter Score
         cfs = collaborative_filtering_score(br_text, prev_reports)
@@ -240,7 +240,7 @@ def extract_features():
                         indexed_non_buggy[f] = read_file(f)
 
             for br in group:
-                features = extract_features_for_bug_report(br, buggy_files, indexed_non_buggy)
+                features = extract_features_for_bug_report(br, buggy_files, indexed_non_buggy, bug_reports)
                 all_features.extend(features)
 
             save_features_to_csv(all_features, os.path.join(data_folder_path, 'features.csv'))
