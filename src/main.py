@@ -8,4 +8,4 @@ from feature_extraction import extract_features
 extract_features()
 
 # print(dnn_model_kfold(10))
-print(rvsm_model())
+# print(rvsm_model())

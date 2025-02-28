@@ -8,6 +8,7 @@ import os
 import random
 import timeit
 import string
+import nltk
 import numpy as np
 import pandas as pd
 from datetime import datetime
@@ -17,6 +18,8 @@ from nltk.stem import PorterStemmer
 from nltk.corpus import stopwords
 from sklearn.feature_extraction.text import TfidfVectorizer
 
+nltk.download('punkt')
+nltk.download('stopwords')
 # Cache stopwords and stemmer
 STOP_WORDS = set(stopwords.words("english"))
 STEMMER = PorterStemmer()
@@ -60,16 +63,29 @@ def tsv2dict(tsv_path):
     Arguments:
     tsv_path {string} -- path of the tsv file
     '''
+    current_dir = os.path.dirname(__file__)
+    parent_dir = os.path.abspath(os.path.join(current_dir, os.pardir))
+    data_folder_path = os.path.join(parent_dir, 'data')
+    repo_dir = os.path.join(data_folder_path, "eclipse.platform.ui")
+    repo_bundles_dir = os.path.join(repo_dir, 'bundles')
     with open(tsv_path, "r", encoding="utf-8") as file:
         reader = csv.DictReader(file, delimiter="\t")
         dict_list = []
         for line in reader:
             # Extract valid Java files, removing prefixes like "6:"
-            line["files"] = [
-                os.path.normpath(f.split(":",1)[-1][8:]) #remove any number prefix and 'bundles/'
-                for f in line["files"].strip().split()
-                if f.endswith(".java")
-            ]
+            
+            if line["files"]:
+                processed_files = []
+                for f in line["files"].split("bundles/"):
+                    if f.strip():
+                        f = f.split(":", 1)[-1]  # Remove any prefix like "6:"
+                        f = "bundles/" + f.strip()
+                        if f.endswith(".java"):
+                            full_path = os.path.normpath(os.path.join(repo_dir, f))
+                            processed_files.append(full_path)
+                line['files'] = processed_files
+            else:
+                line["files"] = []
 
             # combine summary and description safely
             line["raw_text"] = " ".join([line["summary"].strip() , line["description"].strip()])
@@ -81,7 +97,13 @@ def tsv2dict(tsv_path):
                 else None
             )
 
-            dict_list.append(line)
+            # Keep only required keys
+            filtered_line = {
+                key: line[key] for key in reader.fieldnames if key == "files" or key in ["id", "bug_id", "summary", "description", "report_time", "status", "commit", "commit_timestamp"]
+            }
+            filtered_line["raw_text"] = line["raw_text"]
+
+            dict_list.append(filtered_line)
     
     return dict_list
 
@@ -270,7 +292,7 @@ def previous_reports(filename, until, bug_reports):
     return [
         br 
         for br in bug_reports
-        if (filename in br["files"] and br["report_time"] < until)
+        if (filename in br["files"] and br["report_time"] and br["report_time"] < until)
     ]
 
 def bug_fixing_recency(br, prev_reports):
@@ -281,12 +303,14 @@ def bug_fixing_recency(br, prev_reports):
         br {} -- bug report
         prev_reports {} -- previous bug reports (find the data types)
     '''
+    if "report_time" not in br:
+        return 0 # Default value is missing
 
     mrr = most_recent_report(prev_reports)
 
-    if br and mrr:
+    if mrr and "report_time" in mrr:
         return 1 / float (
-            get_months_between(br.get("report_time"), mrr.get("report_time")) + 1
+            get_months_between(br["report_time"], mrr["report_time"]) + 1
         )
     
     return 0
@@ -299,11 +323,10 @@ def collaborative_filtering_score(raw_text, prev_reports):
         raw_text {string} -- raw text of the bug report
         prev_reports {list} -- list of previous reports
     '''
+    if not prev_reports:
+        return 0 # No previous reports - No similarity
 
-    prev_reports_merged_raw_text = ""
-    for report in prev_reports:
-        prev_reports_merged_raw_text += report["raw_text"]
-
+    prev_reports_merged_raw_text = "".join(report["raw_text"] for report in prev_reports if "raw_text" in report)
     cfs = cosine_sim(raw_text, prev_reports_merged_raw_text)
 
     return cfs
@@ -317,13 +340,13 @@ def class_name_similarity(raw_text, source_code):
         source_code {string} -- java source code
     '''
 
-    classes = source_code.split(" class ")[1:]
-    class_names = [c[: c.find(" ")] for c in classes]
+    class_names = re.findall(r'class\s+(\w+)', source_code)
+    if not class_names:
+        return 0 # No class found
+    
     class_names_text = " ".join(class_names)
 
-    class_name_sim = cosine_sim(raw_text, class_names_text)
-
-    return class_name_sim
+    return cosine_sim(raw_text, class_names_text)
 
 def helper_collections(samples_df, only_rvsm=False):
     '''
