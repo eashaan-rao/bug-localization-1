@@ -24,6 +24,7 @@ import time
 from collections import defaultdict
 from datetime import datetime
 import subprocess
+from tqdm import tqdm
 
 # Helper functions
 
@@ -73,8 +74,8 @@ def checkout_code_at_commit(commit_sha, repo_dir):
         return False
     
     try:
-        subprocess.run(["git", "checkout", parent_commit], check=True, cwd=repo_dir)
-        print(f"Checked out buggy version: {parent_commit} (before fix {commit_sha})")
+        subprocess.run(["git", "checkout", parent_commit], check=True, cwd=repo_dir, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        # print(f"Checked out buggy version: {parent_commit} (before fix {commit_sha})")
         return True
     except subprocess.CalledProcessError as e:
         print(f"Error Checking out {parent_commit}: {e}")
@@ -122,44 +123,49 @@ def extract_features_for_bug_report(br, buggy_files, indexed_non_buggy, bug_repo
     '''
     features = []
     br_id, br_text = br["id"], br["raw_text"]
-
     for file in br['files']:
         if file in buggy_files:
             src = read_file(file)
-            features.append(compute_features(br_id, file, br_text, src, 1))
+            features.append(compute_features(bug_reports, int(br_id), file, br_text, src, 1))
 
-        non_buggy_sample = random.sample(list(indexed_non_buggy.items()), min(50, len(indexed_non_buggy)))
-        for file, src in non_buggy_sample:
-            features.append(compute_features(bug_reports, br_id, file, br_text, src, 0))
+    non_buggy_sample = random.sample(list(indexed_non_buggy.items()), min(50, len(indexed_non_buggy)))
+    for file, src in non_buggy_sample:
+        features.append(compute_features(bug_reports, int(br_id), file, br_text, src, 0))
     
     return features
 
 def compute_features(bug_reports, br_id, file, br_text, src, label):
     '''
-        compute all six features
+        compute all five features for a bug report source file pair.
     '''
 
     try:
-        # rVSM Text Similarity
+        bug_report = bug_reports[br_id-1]
+        # Ensure valid inputs
+        if not isinstance(br_text, str) or not isinstance(src, str):
+            raise ValueError("Invalid input: bug report text or source code is not a string")
+                
+       # rVSM Text Similarity
         rvsm = cosine_sim(br_text, src)
 
         # Class Name Similarity
         cns = class_name_similarity(br_text, src)
 
         # Previous Reports
-        prev_reports = previous_reports(file, br_text, bug_reports) #change br_text to report_timestamp
+        prev_reports = previous_reports(file, bug_report["report_time"], bug_reports) #change br_text to report_timestamp
 
         # Collaborative Filter Score
         cfs = collaborative_filtering_score(br_text, prev_reports)
 
         # Bug Fixing Recency
-        bfr = bug_fixing_recency(file, prev_reports)
+        bfr = bug_fixing_recency(bug_report, prev_reports)
 
         # Bug Fixing Frequency
         bff = len(prev_reports)
     
     except Exception as e:
         print(f"Error processing bug report {br_id} for file {file}: {e}")
+        return [br_id, file, None, None, None, None, None, label]
             
 
     return [br_id, file, rvsm, cfs, cns, bfr, bff, label]
@@ -197,13 +203,11 @@ def extract_features():
         # Read bug reports from tab separated file
         file_path = os.path.join(data_folder_path, 'Eclipse_Platform_UI.txt')
         bug_reports = tsv2dict(file_path)
-        # print(bug_reports[:2]) # to veify the correctness
-
 
         # Sort bug reports by commit_timestamp (or report time) so that we can process in chronological order
-        bug_reports.sort(key=lambda br: float(br["commit_timestamp"]))
+        bug_reports.sort(key=lambda br: float(br["commit_timestamp"]) if br["commit_timestamp"] else 0)
 
-        # Group bug reports by the commit hash .
+        # Group bug reports by the commit hash.
         commit_groups = defaultdict(list)
         for br in bug_reports:
             commit_sha = br["commit"]
@@ -212,14 +216,14 @@ def extract_features():
                 continue
             commit_groups[commit_sha].append(br)
         
-        print(f"Grouped bug reports into {len(commit_groups)} commit groups.")
+        # print(f"Grouped bug reports into {len(commit_groups)} commit groups.")
 
         all_features = []
         indexed_non_buggy = {}
 
         # Process each group: checkout the commit once and then extract features for each bug report.
-        for commit_sha, group in commit_groups.items():
-            print(f"Processing group for commit {commit_sha} with {len(group)} bug reports.")
+        for commit_sha, group in tqdm(commit_groups.items(), desc="Processin Commits", unit="commit", total=len(commit_groups)):
+            # print(f"Processing group for commit {commit_sha} with {len(group)} bug reports.")
 
             # Get the parent commit to extract the buggy version
             if not checkout_code_at_commit(commit_sha, repo_dir):
@@ -229,8 +233,8 @@ def extract_features():
             buggy_files = set()
             for br in group:
                 if "files" in br and br["files"]:
-                    for file in br["files"]:
-                        buggy_files.add(os.path.join(repo_bundles_dir, file))
+                    for file in br["files"]:  
+                        buggy_files.add(file)
 
             non_buggy_files = {
                 f for f in get_all_java_files(repo_bundles_dir) if f not in buggy_files
@@ -244,6 +248,7 @@ def extract_features():
                 all_features.extend(features)
 
             save_features_to_csv(all_features, os.path.join(data_folder_path, 'features.csv'))
+    print(f"Feature extraction complete. Features saved to {os.path.join(data_folder_path, 'features.csv')}")
 
 def save_features_to_csv(features, path):
     '''
@@ -265,6 +270,6 @@ def save_features_to_csv(features, path):
         )
         writer.writerows(features)
 
-    print(f"Feature extraction complete. Features saved to {path}")
+
     
         
