@@ -76,13 +76,27 @@ def tsv2dict(tsv_path):
             
             if line["files"]:
                 processed_files = []
-                for f in line["files"].split("bundles/"):
-                    if f.strip():
-                        f = f.split(":", 1)[-1]  # Remove any prefix like "6:"
-                        f = "bundles/" + f.strip()
-                        if f.endswith(".java"):
-                            full_path = os.path.normpath(os.path.join(repo_dir, f))
-                            processed_files.append(full_path)
+                 # Regex pattern to match valid file paths ending with .java
+                # It looks for paths starting with bundles/, examples/, or test/
+                pattern = r'\b(?:bundles|examples|test)\/.*?\.java'
+
+                # Find all matching file paths
+                matches = re.findall(pattern, line["files"])
+                # print("matches: ", matches)
+
+                for f in matches:
+                    # print("f: ", f)
+                    # f = f.strip()
+                    full_path = os.path.normpath(os.path.join(repo_dir, f))
+                    processed_files.append(full_path)
+
+                # for f in line["files"].split(" "):
+                #     if f.strip():
+                #         f = f.split(":", 1)[-1]  # Remove any prefix like "6:"
+                #         f = "bundles/" + f.strip()
+                #         if f.endswith(".java"):
+                #             full_path = os.path.normpath(os.path.join(repo_dir, f))
+                #             processed_files.append(full_path)
                 line['files'] = processed_files
             else:
                 line["files"] = []

@@ -68,17 +68,18 @@ def checkout_code_at_commit(commit_sha, repo_dir):
         bool: True if checkout was successful, False otherwise
     
     '''
-    parent_commit = get_parent_commit(commit_sha, repo_dir)
-    if not parent_commit:
-        print(f"Skipping {commit_sha} as no parent commit found.")
-        return False
+    # parent_commit = get_parent_commit(commit_sha, repo_dir)
+    # if not parent_commit:
+    #     print(f"Skipping {commit_sha} as no parent commit found.")
+    #     return False
     
     try:
-        subprocess.run(["git", "checkout", parent_commit], check=True, cwd=repo_dir, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        # subprocess.run(["git", "checkout", "main"], check=True, cwd=repo_dir, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(["git", "checkout", commit_sha], check=True, cwd=repo_dir, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         # print(f"Checked out buggy version: {parent_commit} (before fix {commit_sha})")
         return True
     except subprocess.CalledProcessError as e:
-        print(f"Error Checking out {parent_commit}: {e}")
+        print(f"Error Checking out {commit_sha}: {e}")
         return False
     
     
@@ -123,11 +124,20 @@ def extract_features_for_bug_report(br, buggy_files, indexed_non_buggy, bug_repo
     '''
     features = []
     br_id, br_text = br["id"], br["raw_text"]
+    buggy_found = False
+
     for file in br['files']:
         if file in buggy_files:
-            src = read_file(file)
-            features.append(compute_features(bug_reports, int(br_id), file, br_text, src, 1))
+                src = read_file(file)
+                if not src.strip():
+                    print(f"Skipping bug report {br_id}: due to missing file")
+                    return []
+                features.append(compute_features(bug_reports, int(br_id), file, br_text, src, 1))
+                buggy_found = True
 
+    if not buggy_found:
+        return []
+    
     non_buggy_sample = random.sample(list(indexed_non_buggy.items()), min(50, len(indexed_non_buggy)))
     for file, src in non_buggy_sample:
         features.append(compute_features(bug_reports, int(br_id), file, br_text, src, 0))
@@ -206,7 +216,7 @@ def extract_features():
 
         # Sort bug reports by commit_timestamp (or report time) so that we can process in chronological order
         bug_reports.sort(key=lambda br: float(br["commit_timestamp"]) if br["commit_timestamp"] else 0)
-
+        # exit(0) b 
         # Group bug reports by the commit hash.
         commit_groups = defaultdict(list)
         for br in bug_reports:
@@ -220,7 +230,7 @@ def extract_features():
 
         all_features = []
         indexed_non_buggy = {}
-
+        skipping_count = 0
         # Process each group: checkout the commit once and then extract features for each bug report.
         for commit_sha, group in tqdm(commit_groups.items(), desc="Processin Commits", unit="commit", total=len(commit_groups)):
             # print(f"Processing group for commit {commit_sha} with {len(group)} bug reports.")
@@ -245,9 +255,14 @@ def extract_features():
 
             for br in group:
                 features = extract_features_for_bug_report(br, buggy_files, indexed_non_buggy, bug_reports)
+                if not features:  # Skip if no features were extracted
+                    print(f"Skipping bug report {br['id']} due to missing files or errors.")
+                    skipping_count += 1
+                    continue
                 all_features.extend(features)
-
-            save_features_to_csv(all_features, os.path.join(data_folder_path, 'features.csv'))
+            if all_features:
+                save_features_to_csv(all_features, os.path.join(data_folder_path, 'features.csv'))
+    print("skipping count: ", skipping_count)
     print(f"Feature extraction complete. Features saved to {os.path.join(data_folder_path, 'features.csv')}")
 
 def save_features_to_csv(features, path):
