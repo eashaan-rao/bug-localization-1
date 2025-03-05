@@ -374,7 +374,7 @@ def helper_collections(samples_df, only_rvsm=False):
     '''
 
     sample_dict = {}
-    # Initializa sample_dict with empty lists for each unique report_id
+    # Initialize sample_dict with empty lists for each unique report_id
     for report_id in samples_df["report_id"].unique():
         sample_dict[report_id] = []
 
@@ -402,7 +402,7 @@ def helper_collections(samples_df, only_rvsm=False):
     br2files_dict = {}
 
     for bug_report in bug_reports:
-        br2files_dict[bug_report["id"]] = bug_report["files"]
+        br2files_dict[int(bug_report["id"])] = bug_report["files"]
     
     return sample_dict, bug_reports, br2files_dict
 
@@ -425,7 +425,7 @@ def topK_accuracy(test_bug_reports, sample_dict, br2files_dict, clf=None):
     for bug_report in test_bug_reports:
         dnn_input = []
         corresponding_files = []
-        bug_id = bug_report["id"]
+        bug_id = int(bug_report["id"])
 
         try:
             for temp_dict in sample_dict[bug_id]:
@@ -447,7 +447,8 @@ def topK_accuracy(test_bug_reports, sample_dict, br2files_dict, clf=None):
 
         # Top-1, top-2 .. top-20 accuracy
         for i in range(1, 21):
-            max_indices = np.argpartition(relevancy_list, -i)[-i:]
+            # max_indices = np.argpartition(relevancy_list, -i)[-i:]
+            max_indices = np.argsort(relevancy_list)[-i:]
             for corresponding_file in np.array(corresponding_files)[max_indices]:
                 if str(corresponding_file) in br2files_dict[bug_id]:
                     topk_counters[i - 1] += 1
@@ -461,7 +462,7 @@ def topK_accuracy(test_bug_reports, sample_dict, br2files_dict, clf=None):
     
     for i, counter in enumerate(topk_counters):
         acc = counter / denominator
-        acc_dict[i + 1] += round(acc, 3)
+        acc_dict[i + 1] = round(acc, 3)
 
     return acc_dict
 

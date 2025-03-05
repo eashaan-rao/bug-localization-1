@@ -27,6 +27,10 @@ def rvsm_model(data_folder_path=None):
     except Exception as e:
         raise
 
+    # print(f"Sample Dict Keys: {list(sample_dict.keys())[:5]}")
+    # print(f"Test Bug Reports IDs: {[br['id'] for br in bug_reports[-5:]]}")
+    # print(f"BR2Files Dict: {dict(list(br2files_dict.items())[:5])}")
+
     # Calculating topk accuracy
     try:
         acc_dict = topK_accuracy(bug_reports, sample_dict, br2files_dict)

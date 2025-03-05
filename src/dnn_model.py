@@ -3,6 +3,7 @@ from sklearn.neural_network import MLPRegressor
 from joblib import Parallel, delayed, cpu_count
 from math import ceil
 import numpy as np
+import pandas as pd
 import os
 
 def oversample(samples):
@@ -121,19 +122,23 @@ def dnn_model_kfold(k=10):
     Arguments:
     k {integer} -- the number of folds (default: {10})
     '''
-
-    samples = csv2dict("../data/features.csv")
+    current_dir = os.path.dirname(__file__)
+    parent_dir = os.path.abspath(os.path.join(current_dir, os.pardir))
+    data_folder_path = os.path.join(parent_dir, 'data')
+    
+    file_path = os.path.join(data_folder_path, 'features.csv')
+    df = pd.read_csv(file_path)
 
     # These collections are speed up the process while calculating top-k accuracy
-    sample_dict, bug_reports, br2files_dict = helper_collections(samples)
+    sample_dict, bug_reports, br2files_dict = helper_collections(df)
 
-    np.random.shuffle(samples)
+    np.random.shuffle(df)
 
     # K-fold cross validation in parallel
     acc_dicts = Parallel(n_jobs=-2) (
         # Uses all cores but one
-        delayed(train_dnn) (i, k, samples, start, step, sample_dict, bug_reports, br2files_dict)
-        for i, (start, step) in enumerate(kfold_split_indexes(k, len(samples))) 
+        delayed(train_dnn) (i, k, df, start, step, sample_dict, bug_reports, br2files_dict)
+        for i, (start, step) in enumerate(kfold_split_indexes(k, len(df))) 
     )
 
     # Calculating the average accuracy from all folds
