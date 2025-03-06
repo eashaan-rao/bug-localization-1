@@ -1,51 +1,80 @@
 from util import csv2dict, tsv2dict, helper_collections, topK_accuracy
 from sklearn.neural_network import MLPRegressor
+from imblearn.over_sampling import RandomOverSampler
 from joblib import Parallel, delayed, cpu_count
 from math import ceil
 import numpy as np
 import pandas as pd
 import os
+from tqdm import tqdm
 
-def oversample(samples):
+def oversample(train_samples):
     '''
-    Oversamples the features for label '1'
+    Oversamples the minority class using RandomOverSampler
 
     Arguments:
-        samples {list} -- samples from features.csv
+        train_samples {pd.DataFrame} -- DataFrame containing training samples with feature columns
+                                        and a 'match' column as  the label
 
+    Returns:
+        pd.DataFrame -- Oversampled DataFrame with balances 'match' labels
     '''
-    samples_ = []
-
-    # oversample features of buggy files (note: didn't understand the logic)
-    for i, sample in enumerate(samples):
-        samples_.append(sample)
-        if i % 51 == 0:
-            for _ in range(9):
-                samples_.append(sample)
     
-    return samples_
+    
+    X = train_samples.drop(columns=['match']) # Features excluding the label column
+    y = train_samples['match'] # label column
+
+    # print("X.shape: ", X.shape)
+    # print("y.shape: ", y.shape)
+
+    # Applu random oversampling to balance the 'match' column
+    ros = RandomOverSampler(random_state=42)
+    X_resampled, y_resampled = ros.fit_resample(X, y)
+
+    # # oversample features of buggy files (note: didn't understand the logic)
+    # for i, sample in enumerate(samples):
+    #     samples_.append(sample)
+    #     if i % 51 == 0:
+    #         for _ in range(9):
+    #             samples_.append(sample)
+
+    # Reconstruct the DataaFrame with the 'match' column added back
+    oversampled_train_samples = X_resampled.copy()
+    oversampled_train_samples['match'] = y_resampled
+    
+    # print("Oversampled train samples shape: ", oversampled_train_samples.shape)
+
+    return oversampled_train_samples
 
 def features_and_labels(samples):
     '''
-    Returns features and labels for the given list of samples
+    Returns features and labels for the given dataframe of samples
 
     Arguments:
-        samples {list} -- samples from features.csv
+        samples {pd.Dataframe} -- samples from features.csv
     
+        Returns:
+            X {np.ndarray} -- Feature array of shape(n_samples, n_features).
+            y {np.ndarray} -- Label array of shape (n_samples,).
     '''
 
-    features = np.zeros((len(samples), 5))
-    labels = np.zeros((len(samples), 1))
+    # Extract features and labels directly using pandas
+    X = samples[['rVSM_similarity', 'collab_filter', 'classname_similarity', 'bug_recency', 'bug_frequency']].astype(float).values
+    y = samples["match"].astype(float).values
 
-    for i, sample in enumerate(samples):
-        features[i][0] = float(sample['rVSM_similarity'])
-        features[i][1] = float(sample["collab_filter"])
-        features[i][2] = float(sample["classname_similarity"])
-        features[i][3] = float(sample["bug_recency"])
-        features[i][4] = float(sample["bug_frequency"])
-        labels[i] = float(sample["match"])
+    # num_samples = len(samples)
+    # X = np.zeros((num_samples, 5))
+    # y = np.zeros((num_samples, 1))
 
-    return features, labels
+    # for i, sample in enumerate(samples):
+    #     X[i][0] = float(sample['rVSM_similarity'])
+    #     X[i][1] = float(sample["collab_filter"])
+    #     X[i][2] = float(sample["classname_similarity"])
+    #     X[i][3] = float(sample["bug_recency"])
+    #     X[i][4] = float(sample["bug_frequency"])
+    #     y[i] = float(sample["match"])
+
+    return X, y
 
 def kfold_split_indexes(k, len_samples):
     '''
@@ -63,7 +92,7 @@ def kfold_split_indexes(k, len_samples):
 
 def kfold_split(bug_reports, samples, start, finish):
     '''
-    Returms train samples and bug reports for test
+    Returns train samples and bug reports for test
 
     Arguments:
         bug_reports {list of dictionaries} -- list of all bug reports
@@ -72,78 +101,103 @@ def kfold_split(bug_reports, samples, start, finish):
         finish {integer} -- start index for test fold
     '''
 
-    train_samples = samples[:start] + samples[finish:]
-    test_samples = samples[start:finish]
+    # Splitting train and test samples
+    train_samples = pd.concat([samples.iloc[:start], samples.iloc[finish:]], ignore_index=True)
+    test_samples = samples.iloc[start:finish]
 
-    test_br_ids = set([s["report_id"] for s in test_samples])
-    test_bug_reports = [br for br in bug_reports if br["id"] in test_br_ids]
+    # Extracting report IDs and matching with bug reports
+    test_br_ids = set(test_samples['report_id'].astype(int))
+    test_bug_reports = [br for br in bug_reports if int(br["id"]) in test_br_ids]
 
     return train_samples, test_bug_reports
 
-def train_dnn(i, num_folds, samples, start, finish, sample_dict, bug_reports, br2files_dict):
+def train_dnn(i, num_folds, df, start, end, sample_dict, bug_reports, br2files_dict):
     '''
-    Trains the dnn model and calculates top-k accuracies
+    Trains the DNN model and calculates top-k accuracies
 
     Arguments:
     i {integer} -- current fold number for printing information
-    num_folds {integer} -- total fold number for printing information
-    samples {list} -- samples from features.csv
+    num_folds {integer} -- Total number of folds
+    df {Dataframe} -- Dataframe of samples from features.csv
     start {integer} -- start index for test fold
-    finish {integer} -- start/last index for test fold
-    sample_dict {dictionary of dictionaries} -- list of all bug reports
-    br2files_dict {dictionary} -- dictionary for "bug report id - list of all related files in features.csv" 
-                                  pairs
+    end {integer} -- start/last index for test fold
+    sample_dict {dict} -- Dictionary of all bug reports
+    br2files_dict {dict} -- Bug report ID related files mapping
     '''
 
-    print("Fold: {} / {}".format(i + 1, num_folds), end="\r")
+    print(f"Fold: {i + 1} / {num_folds}", end="\r")
 
-    train_samples, test_bug_reports = kfold_split(bug_reports, samples, start, finish)
+    train_samples, test_bug_reports = kfold_split(bug_reports, df, start, end)
     train_samples = oversample(train_samples)
-    np.random.shuffle(train_samples)
+    train_samples = train_samples.sample(frac=1, random_state=42).reset_index(drop=True)
     X_train, y_train = features_and_labels(train_samples)
+    # print(len(X_train))
+    # print(len(y_train))
 
     clf = MLPRegressor(
         solver= "sgd",
         alpha=1e-5,
         hidden_layer_sizes=(300,),
         random_state=1,
-        max_iter=10000,
-        n_iter_no_change=30,
+        max_iter=200,
+        n_iter_no_change=10,
+        tol=1e-3,
+        verbose=False
     )
-    clf.fit(X_train, y_train.ravel())
+
+    # Show a progress bar for the folds
+    for i in tqdm(range(num_folds), desc="Folds", unit="fold"):
+        print(f"Training Fold {i + 1} / {num_folds}", flush=True)
+        clf.fit(X_train, y_train.ravel())
 
     acc_dict = topK_accuracy(test_bug_reports, sample_dict, br2files_dict, clf=clf)
     return acc_dict
 
-def dnn_model_kfold(k=10):
+def dnn_model_kfold(k=10, data_folder='data', file_name='features.csv', n_jobs=-2, random_state=42):
     '''
-    Run kfold cross validation in parallel
+    Run k-fold cross validation in parallel
 
     Arguments:
     k {integer} -- the number of folds (default: {10})
+    data_folder {str} -- folder containing the features file
+    file_name {str} -- name of the features file (default file: 'features.csv')
+    n_jobs {integer} -- number of CPU cores to use (default: all but one)
+    random_state {integer} -- random state for reproducibility (default: 42)
     '''
     current_dir = os.path.dirname(__file__)
     parent_dir = os.path.abspath(os.path.join(current_dir, os.pardir))
-    data_folder_path = os.path.join(parent_dir, 'data')
+    file_path = os.path.join(parent_dir, data_folder, file_name)
     
-    file_path = os.path.join(data_folder_path, 'features.csv')
+    if not os.path.isfile(file_path):
+        raise FileNotFoundError(f'File not found: {file_path}')
+    
     df = pd.read_csv(file_path)
 
     # These collections are speed up the process while calculating top-k accuracy
     sample_dict, bug_reports, br2files_dict = helper_collections(df)
 
-    np.random.shuffle(df)
+    # Ensure reproducible shuffling
+    df = df.sample(frac=1, random_state=random_state).reset_index(drop=True)
+
+    # Calculate fold sizes
+    step = int(np.ceil(len(df) / k))
+    fold_indices = [(i, i + step) for i in range(0, len(df), step)]
+
+    # print("step: ", step)
+    # print("fold_indices: ", fold_indices)
 
     # K-fold cross validation in parallel
-    acc_dicts = Parallel(n_jobs=-2) (
+    acc_dicts = Parallel(n_jobs=n_jobs) (
         # Uses all cores but one
-        delayed(train_dnn) (i, k, df, start, step, sample_dict, bug_reports, br2files_dict)
-        for i, (start, step) in enumerate(kfold_split_indexes(k, len(df))) 
+        delayed(train_dnn) (i, k, df, start, end, sample_dict, bug_reports, br2files_dict)
+        for i, (start, end) in enumerate(fold_indices) 
     )
 
     # Calculating the average accuracy from all folds
-    avg_acc_dict = {}
-    for key in acc_dicts[0].keys():
-        avg_acc_dict[key] = round(sum([d[key] for d in acc_dicts]) / len(acc_dicts), 3)
+    avg_acc_dict = {
+        key: round(np.mean([d[key] for d in acc_dicts]), 3) for key in acc_dicts[0].keys()
+    }
+    # for key in acc_dicts[0].keys():
+    #     avg_acc_dict[key] = round(sum([d[key] for d in acc_dicts]) / len(acc_dicts), 3)
     
     return avg_acc_dict

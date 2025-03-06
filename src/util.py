@@ -18,8 +18,8 @@ from nltk.stem import PorterStemmer
 from nltk.corpus import stopwords
 from sklearn.feature_extraction.text import TfidfVectorizer
 
-nltk.download('punkt')
-nltk.download('stopwords')
+nltk.download('punkt', quiet=True)
+nltk.download('stopwords', quiet=True)
 # Cache stopwords and stemmer
 STOP_WORDS = set(stopwords.words("english"))
 STEMMER = PorterStemmer()
