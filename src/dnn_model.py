@@ -1,4 +1,4 @@
-from util import csv2dict, tsv2dict, helper_collections, topK_accuracy
+from util import csv2dict, tsv2dict, helper_collections, topK_accuracy, calculate_MAP, calculate_MRR
 from sklearn.neural_network import MLPRegressor
 from imblearn.over_sampling import RandomOverSampler
 from joblib import Parallel, delayed, cpu_count
@@ -151,7 +151,9 @@ def train_dnn(i, num_folds, df, start, end, sample_dict, bug_reports, br2files_d
         clf.fit(X_train, y_train.ravel())
 
     acc_dict = topK_accuracy(test_bug_reports, sample_dict, br2files_dict, clf=clf)
-    return acc_dict
+    MAP = calculate_MAP(test_bug_reports, sample_dict, br2files_dict, clf=clf)
+    MRR = calculate_MRR(test_bug_reports, sample_dict, br2files_dict, clf=clf)
+    return acc_dict, MAP, MRR
 
 def dnn_model_kfold(k=10, data_folder='data', file_name='features.csv', n_jobs=-2, random_state=42):
     '''
@@ -187,17 +189,28 @@ def dnn_model_kfold(k=10, data_folder='data', file_name='features.csv', n_jobs=-
     # print("fold_indices: ", fold_indices)
 
     # K-fold cross validation in parallel
-    acc_dicts = Parallel(n_jobs=n_jobs) (
+    results = Parallel(n_jobs=n_jobs) (
         # Uses all cores but one
         delayed(train_dnn) (i, k, df, start, end, sample_dict, bug_reports, br2files_dict)
         for i, (start, end) in enumerate(fold_indices) 
     )
 
+    # Separate results into accuracy dictionaries, MAPs and MRRs
+    acc_dicts, MAPs, MRRs = zip(*results)
+
     # Calculating the average accuracy from all folds
     avg_acc_dict = {
         key: round(np.mean([d[key] for d in acc_dicts]), 3) for key in acc_dicts[0].keys()
     }
+
+    # Calculate the average MAP and MRR across all folds
+    avg_MAP = round(np.mean(MAPs), 3)
+    avg_MRR = round(np.mean(MRRs), 3)
+
+    print("Average Top-K accuracy: ", avg_acc_dict)
+    print("Average MAP: ", avg_MAP)
+    print("Average MRR: ", avg_MRR)
     # for key in acc_dicts[0].keys():
     #     avg_acc_dict[key] = round(sum([d[key] for d in acc_dicts]) / len(acc_dicts), 3)
     
-    return avg_acc_dict
+    return avg_acc_dict, avg_MAP, avg_MRR
