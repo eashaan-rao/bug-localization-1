@@ -1,4 +1,4 @@
-from util import csv2dict, helper_collections, topK_accuracy
+from util import csv2dict, helper_collections, topK_accuracy, calculate_MAP, calculate_MRR
 import pandas as pd
 import os
 
@@ -31,10 +31,15 @@ def rvsm_model(data_folder_path=None):
     # print(f"Test Bug Reports IDs: {[br['id'] for br in bug_reports[-5:]]}")
     # print(f"BR2Files Dict: {dict(list(br2files_dict.items())[:5])}")
 
-    # Calculating topk accuracy
+    # Calculating topk- 1, 5, 10 accuracy
     try:
         acc_dict = topK_accuracy(bug_reports, sample_dict, br2files_dict)
+        MAP = calculate_MAP(bug_reports, sample_dict, br2files_dict)
+        MRR = calculate_MRR(bug_reports, sample_dict, br2files_dict)
+        print("Topk: ", acc_dict)
+        print("MAP: ", MAP)
+        print("MRR: ", MRR)
     except Exception as e:
         raise
 
-    return acc_dict
+    return "Done"
