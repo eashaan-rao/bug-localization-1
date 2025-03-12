@@ -5,6 +5,7 @@ A helper file contanining methods to calculate all the metrics for a bug localiz
 import os
 import numpy as np
 from utils.util import tsv2dict
+from lightgbm import LGBMRanker
 
 def helper_collections(samples_df, only_rvsm=False):
     '''
@@ -38,7 +39,7 @@ def helper_collections(samples_df, only_rvsm=False):
         sample_dict[row["report_id"]].append(temp_dict)
 
     current_dir = os.path.dirname(__file__)
-    parent_dir = os.path.abspath(os.path.join(current_dir, os.pardir))
+    parent_dir = os.path.abspath(os.path.join(current_dir, os.pardir, os.pardir))
     data_folder_path = os.path.join(parent_dir, 'data')
     file_path = os.path.join(data_folder_path, 'Eclipse_Platform_UI.txt')
     
@@ -84,11 +85,18 @@ def topK_accuracy(test_bug_reports, sample_dict, br2files_dict, clf=None):
         except KeyError:
             negative_total += 1
             continue
-
+        
         # Calculate relevancy for all files related to the bug report in features.csv
         # In features.csv, there are 50 wrong(randomly choosen) files for each right (buggy) file.
         relevancy_list = []
-        if clf: # dnn classifier
+
+        # Define feature columns
+        feature_cols = ['rVSM_similarity', 'collab_filter', 'classname_similarity', 'bug_recency', 'bug_frequency']
+
+        if isinstance(clf, LGBMRanker):
+            dnn_input_np = np.array(dnn_input)
+            relevancy_list = clf.predict(dnn_input_np)
+        elif clf: # dnn classifier
             relevancy_list = clf.predict(dnn_input)
         else: # rVSM
             relevancy_list = np.array(dnn_input).ravel()
@@ -132,7 +140,14 @@ def calculate_MAP(test_bug_reports, sample_dict, br2files_dict, clf=None):
         except KeyError:
             continue
 
-        relevancy_list = clf.predict(dnn_input) if clf else np.array(dnn_input).ravel()
+        if isinstance(clf, LGBMRanker):
+            dnn_input_np = np.array(dnn_input)
+            relevancy_list = clf.predict(dnn_input_np)
+        elif clf: # dnn classifier
+            relevancy_list = clf.predict(dnn_input)
+        else: # rVSM
+            relevancy_list = np.array(dnn_input).ravel()
+
         ranked_indices = np.argsort(relevancy_list)[::-1]
 
         relevant_files = br2files_dict.get(bug_id, [])
@@ -166,7 +181,14 @@ def calculate_MRR(test_bug_reports, sample_dict, br2files_dict, clf=None):
         except KeyError:
             continue
         
-        relevancy_list = clf.predict(dnn_input) if clf else np.array(dnn_input).ravel()
+        if isinstance(clf, LGBMRanker):
+            dnn_input_np = np.array(dnn_input)
+            relevancy_list = clf.predict(dnn_input_np)
+        elif clf: # dnn classifier
+            relevancy_list = clf.predict(dnn_input)
+        else: # rVSM
+            relevancy_list = np.array(dnn_input).ravel()
+
         ranked_indices = np.argsort(relevancy_list)[::-1]
 
         relevant_files = br2files_dict.get(bug_id, [])
