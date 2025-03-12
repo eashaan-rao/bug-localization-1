@@ -64,7 +64,7 @@ def tsv2dict(tsv_path):
     tsv_path {string} -- path of the tsv file
     '''
     current_dir = os.path.dirname(__file__)
-    parent_dir = os.path.abspath(os.path.join(current_dir, os.pardir))
+    parent_dir = os.path.abspath(os.path.join(current_dir, os.pardir, os.pardir))
     data_folder_path = os.path.join(parent_dir, 'data')
     repo_dir = os.path.join(data_folder_path, "eclipse.platform.ui")
     repo_bundles_dir = os.path.join(repo_dir, 'bundles')

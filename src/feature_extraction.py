@@ -16,7 +16,7 @@ e) Logging & Debugging: Added output messages for tracking progress.
 
 '''
 
-from util import *;
+from utils.util import *;
 from joblib import Parallel, delayed
 import csv
 import os
