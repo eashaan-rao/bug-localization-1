@@ -3,7 +3,8 @@
 from models.dnn_model import dnn_model_kfold
 from models.rvsm_model import rvsm_model
 from models.lambdamart import lambdaMART
-from models.ranknet import RankNet
+from models.ranknet import rankNet
+from models.logisticreg import logReg
 from feature_extraction import extract_features
 # Step 1: Extract Features from the Eclipse_Platform_UI.txt
 # extract_features()
@@ -19,4 +20,7 @@ from feature_extraction import extract_features
 # print(lambdaMART())
 
 # 4. RankNet
-print(RankNet())
+pairwise_data = rankNet()
+print(pairwise_data['label'].value_counts())
+# logistic regression
+print(logReg(pairwise_data))
