@@ -198,3 +198,86 @@ def calculate_MRR(test_bug_reports, sample_dict, br2files_dict, clf=None):
                 reciprocal_ranks.append(1.0 / rank)
                 break
     return round(np.mean(reciprocal_ranks), 3) if reciprocal_ranks else 0.0
+
+def unified_topK_MAP_MRR(bug_reports, sample_dict, br2files_dict, relevancy_dict=None, clf=None, k_values=[1,5,10]):
+    '''
+    Unified function to calculate top-k accuracy, MAP and MRR.
+
+    Arguments:
+        - bug_reports: List of bug report IDs.
+        - sample_dict: Dictionary mapping bug reports to sampled files and their features.
+        - br2files_dict: Dictionary mapping bug reports to actual buggy files
+        - relevancy_dict: Dictionary with precomputed scores (optional, default:None).
+        - clf: Classifier for generating predictions if relevancy_dict is not provided.
+        - k_values: List of K values for Top-K accuracy
+
+    Returns:
+        - acc_dict: Dictionary of Top-K accuracies
+        - MAP: Mean average precision
+        - MRR: Mean Reciprocal Rank
+    
+    '''
+
+    topK_results = {k: [] for k in k_values}
+    avg_precision_list = []
+    reciprocal_ranks = [] 
+
+    for bug_report in bug_reports:
+        bug_id = int(bug_report["id"])    
+
+        # only process bug_id if it is in relevancy_dict (if available)
+        if relevancy_dict and bug_id not in relevancy_dict:
+            continue # Skip irrelevant bug ids
+
+        # use precomputed scores if available, otheriwse predict scores
+        if relevancy_dict and bug_id in relevancy_dict: # use precomputed scores if available
+            file_scores = relevancy_dict[bug_id]
+
+        else:  # otherwise, predict scores using clf
+            dnn_input = []
+            corresponding_files = []
+            for temp_dict in sample_dict[bug_id]:
+                java_file = list(temp_dict.keys())[0]
+                features_for_java_file = list(temp_dict.values())[0]
+                dnn_input.append(features_for_java_file)
+                corresponding_files.append(java_file) 
+            
+            dnn_input_np = np.array(dnn_input)
+            relevancy_list = clf.predict(dnn_input_np)
+            file_scores = dict(zip(corresponding_files, relevancy_list))
+
+        # Sort files by score
+        sorted_files = sorted(file_scores.items(), key=lambda x: x[1], reverse=True)
+        top_files = [file for file, score in sorted_files[:max(k_values)]]
+
+        # Calculate Top-K accuracy
+        for k in k_values:
+            found_buggy = any(file in br2files_dict[bug_id] for file in top_files[:k])
+            topK_results[k].append(found_buggy)
+
+        # Calculate MAP
+        relevant_files = br2files_dict.get(bug_id, [])
+        num_relevant = 0
+        precision_at_k_list = []
+        for i, (file, score) in enumerate(sorted_files):
+            if file in relevant_files:
+                num_relevant += 1
+                precision_at_k = num_relevant / (i + 1)
+                precision_at_k_list.append(precision_at_k)
+
+        avg_precision = np.mean(precision_at_k_list) if precision_at_k_list else 0
+        avg_precision_list.append(avg_precision)
+
+        # Calculate MRR
+        for i, (file, score) in enumerate(sorted_files):
+            if file in relevant_files:
+                reciprocal_ranks.append(1 / (i + 1))
+                break
+            else:
+                reciprocal_ranks.append(0)
+
+    acc_dict = {k: round(np.mean(topK_results[k]), 3) for k in k_values}
+    MAP = round(np.mean(avg_precision_list), 3)
+    MRR = round(np.mean(reciprocal_ranks), 3)
+
+    return acc_dict, MAP, MRR
