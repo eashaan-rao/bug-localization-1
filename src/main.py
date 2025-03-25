@@ -8,7 +8,7 @@ from models.dnn_model_custom_loss import train_dnn_with_custom_loss
 from feature_extraction import extract_features
 
 # Step 1: Extract Features from the Eclipse_Platform_UI.txt
-# extract_features()
+extract_features()
 
 # BLs model
 # 1. rvsm model
@@ -21,5 +21,6 @@ from feature_extraction import extract_features
 # print(lambdaMART())
 
 # 4. DNN model with custom loss
-print(train_dnn_with_custom_loss())
+# print(train_dnn_with_custom_loss())
+
 

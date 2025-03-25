@@ -14,9 +14,13 @@ c) Negative Sampling: Randomly selects 50 non-buggy files per bug report.
 d) Commit Handling: Implements get_commit_before(timestamp) & checkout_code_at_timestamp(timestamp).
 e) Logging & Debugging: Added output messages for tracking progress.
 
+Update: 24th March 2025
+Adding a method to compute similarity using a pretrained model (code-bert)
+
 '''
 
 from utils.util import *;
+from utils.util_transformer import codebert_similarity
 from joblib import Parallel, delayed
 import csv
 import os
@@ -172,13 +176,16 @@ def compute_features(bug_reports, br_id, file, br_text, src, label):
 
         # Bug Fixing Frequency
         bff = len(prev_reports)
+
+        # CodeBERT similarity
+        cbs = codebert_similarity(br_text, src)
     
     except Exception as e:
         print(f"Error processing bug report {br_id} for file {file}: {e}")
-        return [br_id, file, None, None, None, None, None, label]
+        return [br_id, file, None, None, None, None, None, None, label]
             
 
-    return [br_id, file, rvsm, cfs, cns, bfr, bff, label]
+    return [br_id, file, rvsm, cfs, cns, bfr, bff, cbs, label]
 
 def extract_features():
     '''
@@ -280,6 +287,7 @@ def save_features_to_csv(features, path):
                 "classname_similarity",
                 "bug_recency",
                 "bug_frequency",
+                "codebert_similarity",
                 "match",
             ]
         )

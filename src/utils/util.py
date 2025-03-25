@@ -204,7 +204,7 @@ def cosine_sim(text1, text2):
     '''
     vectorizer = TfidfVectorizer(preprocessor=clean_text, tokenizer=tokenize_and_stem, token_pattern=None)
     tfidf = vectorizer.fit_transform([text1, text2])
-    sim = ((tfidf * tfidf.T).A)[0,1]
+    sim = ((tfidf * tfidf.T).toarray())[0,1]
 
     return sim
 
