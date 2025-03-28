@@ -1,0 +1,14 @@
+/data/eclipse.platform.ui
+/data/Eclipse_Platform_UI.txt
+/data/dataset
+.venv/
+/data/features.csv
+*.pyc
+__pycache__/
+*.py[cod]
+*.so
+
+# ignore cython compiled files
+*.cypthon-*
+
+
