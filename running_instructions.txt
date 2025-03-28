@@ -1,3 +1,0 @@
-Here I am going to jot down my experiences and notes on how to run the current code and future code/ extensions. Will detail out the my experiments and results observations as well.
-
-1. Version 1: Running Instructions
