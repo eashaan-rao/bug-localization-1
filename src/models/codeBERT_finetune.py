@@ -6,8 +6,10 @@ import os
 import pandas as pd
 import torch
 from torch.utils.data import Dataset, DataLoader
-from transformers import RobertaTokenizer, RobertaForSequenceClassification, Trainer, TrainingArguments
+from transformers import RobertaTokenizer, RobertaForSequenceClassification, Trainer, TrainingArguments, DataCollatorWithPadding
 from sklearn.model_selection import train_test_split
+import transformers
+import logging
 
 
 tokenizer = RobertaTokenizer.from_pretrained("microsoft/codebert-base")
@@ -23,57 +25,57 @@ def chunk_source_code(source_code, bug_report_tokens, max_length=CHUNK_SIZE, ove
     Split source code into overlapping chunks with space for bug report tokens.
     '''
     # Reserve space for bug report + special tokens
-    chunk_size = max_length - len(bug_report_tokens) - 10
+    chunk_size = max(max_length - len(bug_report_tokens) - 10, 1)
 
     # tokenize and split source code into chunks
     tokens = tokenizer.tokenize(source_code)
+
+    # Ensure the step is valid to prevent range errors
+    effective_step = max(chunk_size - overlap, 1)
+
     chunks = []
-    for i in range(0, len(tokens), chunk_size - overlap):
+    for i in range(0, len(tokens), effective_step):
         chunk = tokens[i : i + chunk_size]
         chunks.append(tokenizer.convert_tokens_to_string(chunk))
     return chunks
 
 class BugLocalizationDataset(Dataset):
     def __init__(self, df, tokenizer, max_length=512):
-        self.df = df
         self.tokenizer = tokenizer
         self.max_length = max_length
+        self.samples = []
+        
+        # Precompute chunks and store them in self.samples
+        for _, row in df.iterrows():
+            bug_report = str(row['bug_report'])
+            source_code = str(row['source_code'])
+            label = int(row['label'])
+
+            # Tokenize bug report to calculate available space
+            bug_report_tokens = tokenizer.tokenize(bug_report)
+            if len(bug_report_tokens) > MAX_BUG_REPORT_TOKENS:
+                bug_report_tokens =  bug_report_tokens[:128] + bug_report_tokens[-128:]
+                max_length = MAX_SRC_CHUNK_TOKENS
+            else:
+                # Allow dynamic length for source chunk if bug report is shorter
+                max_length = self.max_length - len(bug_report_tokens) - 10
+
+            # generate all chunks
+            src_chunks = chunk_source_code(source_code, bug_report_tokens, max_length=max_length)
+
+            # Store all (bug_report, src_chunk, label) pairs
+            for src_chunk in src_chunks:
+                self.samples.append((bug_report, src_chunk, label))
+
 
     def __len__(self):
-        return len(self.df)
+        return len(self.samples)
     
     def __getitem__(self, idx):
         '''
             Returns (bug_report, src_chunk, label) as input for CodeBERT.
         '''
-        # Find the corresponding row and chunk index
-        row_idx = idx // len(self.df)  # Identify the row
-        chunk_idx = idx % len(self.df)  # Identify the chunk for that row
-        
-        # Retrieve the corresponding row
-        row = self.df.iloc[row_idx]
-        bug_report = str(row['bug_report'])
-        source_code = str(row['source_code'])
-        label = int(row['label'])
-
-        # Tokenize bug report to calculate available space
-        bug_report_tokens = tokenizer.tokenize(bug_report)
-        if len(bug_report_tokens) > MAX_BUG_REPORT_TOKENS:
-            bug_report_tokens =  bug_report_tokens[:128] + bug_report_tokens[-128:]
-            max_length = MAX_SRC_CHUNK_TOKENS
-        else:
-            # Allow dynamic length for source chunk if bug report is shorter
-            max_length = self.max_length - len(bug_report_tokens) - 10
-
-        # generate all chunks
-        src_chunks = chunk_source_code(source_code, bug_report_tokens, max_length=max_length)
-        
-        # if the requested chunk_idx is out of range, return None
-        if not src_chunks or chunk_idx >= len(src_chunks):
-            return None
-        
-        # Return the requested chunk
-        src_chunk = src_chunks[chunk_idx]
+        bug_report, src_chunk, label = self.samples[idx]
 
         # Prepare inputs for the model
         inputs = self.tokenizer(
@@ -113,22 +115,30 @@ def codebert_finetune():
         num_train_epochs=3,
         per_device_eval_batch_size=8,
         per_device_train_batch_size=8,
-        evaluation_strategy="epoch",
+        eval_strategy="epoch",
         save_strategy="epoch",
         learning_rate=2e-5,
         weight_decay=0.01,
         save_total_limit=2,
         load_best_model_at_end=True,
+        disable_tqdm=False,  # Enable progress bar
         fp16=True
     )
 
+    data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
+
+    # Enable progress bar explicitly
+    transformers.utils.logging.enable_progress_bar()
+    transformers.utils.logging.set_verbosity_info()
+    logging.getLogger("transformers").setLevel(logging.INFO)
+    
     #Define Trainer
     trainer = Trainer(
         model = model,
         args = training_args,
         train_dataset = train_dataset,
         eval_dataset = val_dataset,
-        tokenizer = tokenizer
+        data_collator = data_collator
     )
 
     # Start Fine-tuning
