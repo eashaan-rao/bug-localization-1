@@ -4,6 +4,7 @@
 .venv/
 /data/features.csv
 /data/dataset_codebert.csv
+/data/models/
 *.pyc
 __pycache__/
 *.py[cod]
