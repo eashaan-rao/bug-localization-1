@@ -8,6 +8,7 @@ from models.dnn_model_custom_loss import train_dnn_with_custom_loss
 from feature_extraction import extract_features
 from feature_extraction_codebert import prepare_dataset_for_codebert
 from models.codeBERT_finetune import codebert_finetune
+from utils.util_code_ast import extract_src_to_ast
 
 # Step 1: Extract Features from the Eclipse_Platform_UI.txt
 # extract_features()
@@ -15,7 +16,10 @@ from models.codeBERT_finetune import codebert_finetune
 # prepare_dataset_for_codebert()
 
 # Finetune the codebert
-codebert_finetune()
+# codebert_finetune()
+
+# Convert src code to ast
+extract_src_to_ast()
 
 # BLs model
 # 1. rvsm model

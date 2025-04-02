@@ -4,6 +4,7 @@
 .venv/
 /data/features.csv
 /data/dataset_codebert.csv
+/data/ast_dataset.json
 /data/models/
 *.pyc
 __pycache__/
