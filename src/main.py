@@ -9,6 +9,7 @@ from feature_extraction import extract_features
 from feature_extraction_codebert import prepare_dataset_for_codebert
 from models.codeBERT_finetune import codebert_finetune
 from utils.util_code_ast import extract_src_to_ast
+from utils.util_code_cpg import extract_src_to_cpg
 
 # Step 1: Extract Features from the Eclipse_Platform_UI.txt
 # extract_features()
@@ -19,7 +20,10 @@ from utils.util_code_ast import extract_src_to_ast
 # codebert_finetune()
 
 # Convert src code to ast
-extract_src_to_ast()
+# extract_src_to_ast()
+
+# Convert src code to cpg
+extract_src_to_cpg()
 
 # BLs model
 # 1. rvsm model
