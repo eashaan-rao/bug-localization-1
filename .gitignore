@@ -5,12 +5,15 @@
 /data/features.csv
 /data/dataset_codebert.csv
 /data/ast_dataset.json
+/data/cpg_dataset.pkl
 /data/pickle_dataset.pkl
 /data/models/
+/temp_joern/
 *.pyc
 __pycache__/
 *.py[cod]
 *.so
+*.bin
 
 # ignore cython compiled files
 *.cypthon-*
