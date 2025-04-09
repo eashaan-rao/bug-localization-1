@@ -462,38 +462,76 @@ def gcn_model():
     
     logger.info(f"Found {len(all_bug_reports)} unique bug reports")
 
-    # Instantiate dataset
-    dataset = ASTBugReportDataset(root=data_folder_path, pickle_file=pickle_file)
-    
-    # loading ast pickle file to get all bug report IDs.
-    with open(pickle_file, 'rb') as f:
-        all_bug_reports = set()
-        while True:
-            try:
-                br, _, _, _ = pickle.load(f)
-                all_bug_reports.add(br)
-            except EOFError:
-                break
-    
-    # Dataloader setup
+    # Split bug reports into train/val/test
     train_ids, val_ids, test_ids = split_bug_reports(all_bug_reports)
+    logger.info(f"Split sizes - Train: {len(train_ids)}, Val: {len(val_ids)}, Test: {len(test_ids)}")
 
-    train_dataset = ASTBugReportDataset('pickle_dataset.pkl', train_ids)
-    val_dataset = ASTBugReportDataset('pickle_dataset.pkl', val_ids)
-    test_dataset = ASTBugReportDataset('pickle_dataset.pkl', test_ids)
+    # Create datasets
+    logger.info("Creating datasets...")
+    try:
+        train_dataset = ASTBugReportDataset(root=data_folder_path, pickle_file=pickle_file, split_bug_ids=train_ids)
+        val_dataset = ASTBugReportDataset(root=data_folder_path, pickle_file=pickle_file, split_bug_ids=val_ids)
+        test_dataset = ASTBugReportDataset(root=data_folder_path, pickle_file=pickle_file, split_bug_ids=test_ids)
+    except Exception as e:
+        logger.error(f"Error creating datasets: {e}")
+        return
     
-    # each batch is grouped by one bug report (i.e., 50–52 files), we treat that as the “unit” of batching
-    train_loader = DataLoader(train_dataset, batch_size=1, shuffle=True, collate_fn=bug_report_collate)
-    val_loader = DataLoader(val_dataset, batch_size=1, shuffle=True, collate_fn=bug_report_collate)
-    test_loader = DataLoader(test_dataset, batch_size=1, shuffle=True, collate_fn=bug_report_collate)
+    # Create data loaders
+    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=32, shuffle=True)
+    test_loader = DataLoader(test_dataset, batch_size=32, shuffle=True)
 
-    # Determine number of node features (we used a single integer per node)
-    num_node_features = 1 # since each node is represented by an integer index
+    # Initialize model
+    num_node_features = 1 # We're using a single integer index per node
+    model = GCN(num_node_features, hidden_channels=hidden_channels).to(device)
+    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
 
-    model = GCN(num_node_features, hidden_channels=64).to(device)
-    optimizer = torch.optim.Adam(model.parameters(), le=0.01, weight_decay=5e-4)
+    # Training loop
+    logger.info("Starting training...")
+    best_val_acc = 0
+    best_model_state = None
 
+    for epoch in range(1, epochs+1):
+        # Train
+        train_loss, train_acc = train_model(model, train_loader, optimizer, device)
+
+        # Validate
+        val_acc, val_preds, val_targets = evaluate(model, val_loader, device)
+
+        logger.info(f"Epoch: {epoch:03d}, Train Loss: {train_loss:.4f}, Train Acc: {train_acc}, Val Acc: {val_acc:.4f}")
+
+        # Save best model
+        if val_acc > best_val_acc:
+            best_val_acc = val_acc
+            best_model_state = model.state_dict().copy()
+
+    # Load best model for testing
+    if best_model_state:
+        model.load_state_dict(best_model_state)
+
+    # Test accuracy
+    test_acc, test_preds, test_targets = evaluate(model, test_loader, device)
+    logger.info(f"Test Accuracy: {test_acc:.4f}")
+
+    # Perform ranking evaluation
+    logger.info("Generating rankings for bug localization...")
+    bug_report_to_scores = predict_and_rank(model, test_loader, device)
     
+    # Compute ranking metrics
+    topk, map_score, mrr_score = compute_ranking_metrics(bug_report_to_scores)
+
+    # Print ranking metrics
+    logger.info("Bug Localization Performance:")
+    for k, acc in topk.items():
+        logger.info(f"Top-{k} Accuracy: {acc:.4f}")
+    logger.info(f"Mean Average Precision (MAP): {map_score:.4f}")
+    logger.info(f"Mean Reciprocal Rank (MRR): {mrr_score:.4f}")
+
+    # Save model
+    output_dir = os.path.join(data_folder_path, "models")
+    os.makedirs(output_dir, exist_ok=True)
+    torch.save(model.state_dict(), os.path.join(output_dir, 'bug_localization_gnn.pt'))
+    logger.info(f"Model saved to {os.path.join(output_dir, "bug_localization_gn.py")}")
 
 
 
