@@ -4,6 +4,7 @@ from models.dnn_model import dnn_model_kfold
 from models.rvsm_model import rvsm_model
 from models.lambdamart import lambdaMART
 from models.dnn_model_custom_loss import train_dnn_with_custom_loss
+from models.gnn_ast_model import gcn_model
 
 from feature_extraction import extract_features
 from feature_extraction_codebert import prepare_dataset_for_codebert
@@ -23,7 +24,10 @@ from utils.util_code_cpg import extract_src_to_cpg
 # extract_src_to_ast()
 
 # Convert src code to cpg
-extract_src_to_cpg()
+# extract_src_to_cpg()
+
+# GNN based ast representation bug localization
+gcn_model()
 
 # BLs model
 # 1. rvsm model

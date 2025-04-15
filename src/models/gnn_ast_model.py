@@ -3,19 +3,23 @@ Code for training a GNN model for AST based source code for bug localization
 '''
 
 import torch
-from torch_geometric.data import Data, InMemoryDataset
+from utils.util_gnn_ast_data import prepare_dataset
 from torch_geometric.nn import GCNConv, global_mean_pool
 from torch_geometric.loader import DataLoader
+from torch_geometric.data import Batch
 import torch.nn.functional as F
+from torch.nn import LayerNorm, Dropout
 from torch.utils.data import Dataset
 from collections import defaultdict
-import pickle
-import random
 import os
 from tqdm import tqdm
 import numpy as np
 from sklearn.metrics import average_precision_score
 import logging
+from transformers import AutoTokenizer
+
+# Initilaize tokenizer 
+tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
 
 # Set up logging
 logging.basicConfig(
@@ -25,9 +29,50 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+class BugLocalizationModel(torch.nn.Module):
+    def __init__(self, vocab_size, embedding_dim, num_node_features, hidden_channels, dropout_rate=0.1):
+        super(BugLocalizationModel, self).__init__()
+        # Bug report text encoder
+        self.embedding = torch.nn.Embedding(vocab_size, embedding_dim)
+        self.text_encode = torch.nn.LSTM(embedding_dim, hidden_channels, batch_first=True)
+        self.text_norm = LayerNorm(hidden_channels)
+        self.text_dropout = Dropout(dropout_rate)
+
+        # Use GCN only for code representation
+        self.ast_encoder = GCN(num_node_features, hidden_channels, dropout_rate)
+
+        # Combination and ranking components
+        self.combination_layer = torch.nn.Linear(hidden_channels *2, hidden_channels)
+        self.comb_norm = LayerNorm(hidden_channels)
+        self.comb_dropout = Dropout(dropout_rate)
+        self.ranking_score = torch.nn.Linear(hidden_channels, 1)
+    
+    def forward(self, bug_report_tokens, ast_data):
+        # 1. encode bug report
+        embedded = self.embedding(bug_report_tokens)
+        _, (hidden, _) = self.text_encode(embedded)
+        # Handle batch dimension properly - hidden shape is (bnum_layers, batch, hidden_size)
+        bug_repr = hidden[-1] # Take the last layer's hidden state
+        bug_repr = self.text_norm(bug_repr)
+        bug_repr = self.text_dropout(bug_repr)
+
+        # 2. Encode AST using existing GCN
+        # The ast_encoder expects the entire Pytorch geometri data object
+        code_repr = self.ast_encoder(ast_data.x.float(), ast_data.edge_index, ast_data.batch)
+
+        # 3. Combine representations
+        combined = torch.cat([bug_repr, code_repr], dim=1)
+        combined = F.relu(self.combination_layer(combined))
+        combined = self.comb_norm(combined)
+        combined = self.comb_dropout(combined)
+
+        # 4. Calculate ranking score
+        score = self.ranking_score(combined)
+        return score
+
 # GCN model (Graph Classification) 
 class GCN(torch.nn.Module):
-    def __init__(self, num_node_features, hidden_channels, num_classes=2):
+    def __init__(self, num_node_features, hidden_channels, dropout_rate=0.1):
         """
         Graph Convolution Network for Bug Localization.
 
@@ -38,328 +83,115 @@ class GCN(torch.nn.Module):
         """
         super(GCN, self).__init__()
         self.conv1 = GCNConv(num_node_features, hidden_channels)
+        self.norm1 = LayerNorm(hidden_channels)
         self.conv2 = GCNConv(hidden_channels, hidden_channels)
-        self.lin = torch.nn.Linear(hidden_channels, num_classes)  
-    
-    def forward(self, data):
-        """Forward pass through the network"""
-        x, edge_index, batch = data.x.float(), data.edge_index, data.batch
-        
+        self.norm2 = LayerNorm(hidden_channels)
+        self.dropout = Dropout(dropout_rate)
+        # No classification layer needed
+
+    def forward(self, x, edge_index, batch):
         # First graph conv layer
         x = self.conv1(x, edge_index)
         x = F.relu(x)
-        x = F.dropout(x, p=0.1, training=self.training)
+        x = self.dropout(x)
 
         # Second graph conv layer
         x = self.conv2(x, edge_index)
-        x = F.relu(x)
+        x = F.relu(self.norm2(x))
 
         # global mean pooling to get graph-level representation
         x = global_mean_pool(x, batch)
-        
-        # Classification layer
-        x = self.lin(x)
-        return x
 
-# Custom InMemoryDataset for AST graphs
-class ASTBugReportDataset(InMemoryDataset):
-    def __init__(self, root, pickle_file, split_bug_ids=None, transform=None, pre_transform=None):
-        '''
-        Dataset for AST Bug Localization
+        return x  # return the graph embeddings directly
 
-        Args:
-            root(str) : Root directory where the processed data will be stored.
-            pickle_file(str): Path of the pickle file containing the AST dataset
-            split_bug_ids (list, optional): Bug IDs to include in this dataset split
-            transform (callable, optional): Transform to be applied to each data instance
-            pre_transform (callable, optional): Pre-transform to be applied to each data instance
-        '''
+# ----- Helper Functions -----
 
-        self.pickle_file = pickle_file
-        self.split_bug_ids = split_bug_ids
-        super(ASTBugReportDataset, self).__init__(root, transform, pre_transform)
-        self.data, self.slices = torch.load(self.processed_paths[0])
-
-        @property
-        def raw_file_names(self):
-            # not used because we assume the raw file is already in pickle format...
-            return []
-        
-        @property
-        def processed_file_names(self):
-            return ["data.pt"]
-        
-        def process(self):
-            # Process the raw data into PyTorch Geometric Data Objects
-            logger.info(f"Processing dataset from {self.pickle_file}")
-            
-            # check if file exists
-            if not os.path.exists(self.pickle_file):
-                raise FileNotFoundError(f"Dataset file not found: {self.pickle_file}")
-            
-            # Load bug reports based on split
-            data_list = []
-            samples = defaultdict(list)
-    
-            with open(self.pickle_file, 'rb') as f:
-                try:
-                    # First, detemine the format of the pickle file by looking at the first entry
-                    first_entry = pickle.load(f)
-                    f.seek(0)  # Reset file pointer
-
-                    # Process the file based on its format
-                    if isinstance(first_entry, dict):
-                        # Format: List of dictionaries
-                        dataset = pickle.load(f)
-                        for instance in tqdm(dataset, desc="Converting ASTs to Graphs"):
-                            # Each instance is expected to have keys: "bug_report", "filename", "ast_src_code," and "label"
-                            br_id = instance.get("bug_report", "unknown")
-
-                            # Skip if not in split_bug_ids (if provided)
-                            if self.split_bug_ids and br_id not in self.split_bug_ids:
-                                continue
-
-                            ast_dict = instance["ast_src_code"]
-                            label = instance["label"]
-                            filename = instance.get("filename", "unknown")
-
-                            # Convert the AST to a PyG graph
-                            data = ast_to_pyg_graph(ast_dict)
-                            data.y = torch.tensor([label], dtype=torch.long)
-                            data.bug_report_id = br_id
-                            data.filename = filename
-                            data_list.append(data)
-                    else:
-                        # Format: Sequential entries
-                        while True:
-                            try:
-                                br_id, filename, ast_dict, label = pickle.load(f)
-
-                                # Skip if not in split_bug_ids (if provided)
-                                if self.split_bug_ids and br_id not in self.split_bug_ids:
-                                    continue
-
-                                 # Convert the AST to a PyG graph
-                                data = ast_to_pyg_graph(ast_dict)
-                                data.y = torch.tensor([label], dtype=torch.long)
-                                data.bug_report_id = br_id
-                                data.filename = filename
-                                data_list.append(data)
-                            except EOFError:
-                                break
-                except Exception as e:
-                    logger.error(f"Error processing pickle file: {e}")
-                    raise
-            
-            if not data_list:
-                logger.warning("No data instances were processed. Dataset maybe empty or invalid.")
-            
-            logger.info(f"Proceesed {len(data_list)} data instances")
-
-            # Collate all data objects
-            if self.pre_transform is not None:
-                data_list = [self.pre_transform(data) for data in data_list]
-
-            data, slices = self.collate(data_list)
-            torch.save((data, slices), self.processed_paths[0])
-
- 
-# Ast to PyG graph conversion
-def ast_to_pyg_graph(ast_node):
+def get_bug_report_tokens(bug_report_id, all_bug_report_descriptions, tokenizer, device):
     '''
-       Convert AST (represented as nested dictionaries) to PyTorch Geometric graph
-
-        Agrs:
-            ast_node (dict): Root node of the AST
-        Returns:
-            Data: Pytorch geometric data object representing the graph
-    '''
-    node_features = []
-    node_idx = 0
-    edge_list = []
-
-    def traverse(node, parent_idx=None):
-        nonlocal node_idx
-        current_idx = node_idx
-        node_idx += 1
-
-        # Create node feature
-        label = node.get("type", "")
-        text = node.get("text", "")
-        feature_str = f"{label}_{text}" if text else label
-        node_features.append(feature_str)
-
-        # Add edge from parent (if not roor)
-        if parent_idx is not None:
-            edge_list.append((parent_idx, current_idx))
-
-        # Process children recursively
-        for child in node.get("children", []):
-            if child:  # Skip None children
-                traverse(child, current_idx)
-    
-    # Build the graph structure
-    traverse(ast_node)
-
-    # Convert features to indices
-    vocab = {feat: i for i, feat in enumerate(set(node_features))}
-    x = torch.tensor([vocab[f] for f in node_features], dtype=torch.long).unsqueeze(1)
-
-    # Create edge index tensor [2, num_edges]
-    if edge_list:
-        edge_index = torch.tensor(edge_list, dtype=torch.long).t().contiguous()
-    else:
-        # Handle case with no edges (single node)
-        edge_index = torch.zeros((2, 0), dtype=torch.long)
-
-    return Data(x=x, edge_index=edge_index)
-
-
-# Dataset splitter (by bug report)
-def split_bug_reports(all_bug_reports, ratios=(0.7, 0.15, 0.15), seed=42):
-    '''
-    Split bug reports into train, validation and test sets
+    Retrieves, tokenizes, and converts a bug report description to a torch.Tensor
 
     Args:
-        all_bug_reports (list): List of bug report IDs
-        ratios (tuple): Proportions for train, val, test splits
-        seed (int): Random seed for reproducibility
+        bug_report_id (str) : The description of the bug report.
+        all_bug_report_descriptions (dict) : Dictionary mapping bug report IDs to their descriptions.
+        tokenizer: Tokenizer object (e.g., from transformers library)
+        device: Device to move the tensor to
 
     Returns:
-        tuple: (train_ids, val_ids, test_ids)
+        torch.Tensor: Tokenize bug report description. 
     '''
-    random.seed(seed)
-    bug_reports = list(set(all_bug_reports))
-    random.shuffle(bug_reports)
-    
-    n = len(bug_reports)
-    n_train = int(ratios[0] * n)
-    n_val = int(ratios[1] * n)
+    description = all_bug_report_descriptions.get(bug_report_id,"")
+    tokens = tokenizer(description, return_tensors="pt", truncation=True, padding=True)
+    return tokens['input_ids'].squeeze(0).to(device)
 
-    return (
-        bug_reports[:n_train],
-        bug_reports[n_train:n_train+n_val],
-        bug_reports[n_train+n_val:]
-    )
-
-
-def train_model(model, loader, optimizer, device):
+def pairwise_ranking_loss(scores, labels, margin=1.0):
     '''
-    Train the model for one epoch
+    Pairwise ranking loss.
 
     Args:
-        model (GCN): Model to train
-        loader (DataLoader) : Training data loader
-        optimizer: Optimizer for training
-        device: Device to train on
+        scores (torch.Tensor): Predicted scores for the files.
+        labels (torch.Tensor): Binary labels (1 for buggy, 0 for non-buggy).
+        margin (float): Margin for the loss.
 
     Returns:
-        float: Average loss for this epoch
+        torch.Tensor: The pairwise ranking loss
     '''
-    model.train()
-    total_loss = 0
-    correct = 0
-    total = 0
+    loss = torch.Tensor(0.0, requires_grad=True, device=scores.device)
+    positive_indices = (labels == 1).nonzero(as_tuple=True)[0]
+    negative_indices = (labels == 0).nonzero(as_tuple=True)[0]
 
-    for data in loader:
-        data = data.to(device)
-        optimizer.zero_grad()
-        out = model(data)
-        loss = F.cross_entropy(out, data.y.view(-1))
-        loss.backward()
-        optimizer.step()
+    if len(positive_indices) > 0 and len(negative_indices) > 0:
+        for pos_idx in positive_indices:
+            for neg_idx in negative_indices:
+                diff = scores[neg_idx] - scores[pos_idx] + margin
+                loss = loss + torch.max(torch.zeros_like(diff), diff)
+        loss = loss/ (len(positive_indices) * len(negative_indices) + 1e-7)
+    return loss
 
-        # Calculate accuracy
-        pred = out.argmax(dim=1)
-        correct += int((pred == data.y.view(-1)).sum())
-        total += data.y.size(0)
-
-
-        total_loss += loss.item() * data.num_graphs
-
-    avg_loss = total_loss / len(loader.dataset)
-    accuracy = correct / total
-    
-    return avg_loss, accuracy
-    
-
-def evaluate(model, loader, device):
+def predict_and_rank(model, data_by_bug_report, all_bug_report_description, tokenizer, device):
     '''
-    Evaluate model on validation or test set
+    Generate predictions for ranks files for each bug report
 
     Args:
-        model (GCN): Model to evaluate
-        loader (DataLoader): Data loader for evaluation
-        device: Device to evaluate on
-    
-    Returns:
-        tuple: (accuracy, predictions, targets)
-    '''
-    model.eval()
-    correct = 0
-    total = 0
-    all_preds = []
-    all_targets = []
-    
-    with torch.no_grad():
-        for data in loader:
-            data = data.to(device)
-            out = model(data)
-            pred = out.argmax(dim=1)
-
-            # Store predictions and targets
-            all_preds.extend(pred.cpu().numpy())
-            all_targets.extend(data.y.view(-1).cpu().numpy())
-
-            # Calculate accuracy
-            correct += int((pred == data.y.view(-1).sum()))
-            total += data.y.size(0)
-    
-    accuracy = correct / total if total > 0 else 0
-    return accuracy, all_preds, all_targets
-
-
-def predict_and_rank(model, dataloader, device):
-    '''
-    Generate predictions for ranking files by bug probability
-
-    Args:
-        model (GCN): Trained model
-        dataloader (DataLoader): Test data loader
+        model (BugLocalization): Trained model
+        data_by_bug_report (dict): Dictionary mapping bug report IDs to a list of Data objects.
+        all_bug_report_descriptions (dict): Dictionary of bug report descriptions.
+        tokenizer: Tokenizer object
         device: Device to run inference on
 
     Returns:
-        dict: Bug report ID to list of (filename, label, score) tuples
+        dict: Bug report ID to list of (filename, label, score) tuples, sorted by score
     '''
     model.eval()
-    bug_report_to_scores = defaultdict(list)
+    bug_report_to_ranked_results = defaultdict(list)
 
     with torch.no_grad():
-        for data in dataloader:
-            data = data.to(device)
-            out = model(data)
-            # Get probability of buggy class
-            probs = torch.softmax(out, dim=1)[:, 1].cpu().numpy()
+        for bug_report_id, files in tqdm(data_by_bug_report.items(), desc ="Predicting and Ranking"):
+            if not files:
+                continue
+            bug_report_tokens = get_bug_report_tokens(bug_report_id, all_bug_report_description, tokenizer, device).unsqueeze(0).repeat(len(files), 1)
+            ast_data_list = [f.to(device) for f in files]
+            batch_graph = Batch.from_data_list(ast_data_list)
+            scores = model(bug_report_tokens, batch_graph).squeeze().cpu().numpy()
+            filenames = [f.filename for f in files]
+            labels = [f.y.item() for f in files]
+            
+            results = []
+            for filename, label, score in zip(filenames, labels, scores):
+                results.append({'filename': filename, 'label':label, 'score': score})
 
-            batch_size = data.y.size(0)
-            for i in range(batch_size):
-                # Extract single graph data
-                bug_report = data.bug_report_id[i] 
-                filename = data.filename[i]  
-                label = int(data.y[i].item())
-                score = float(probs[i])
+            # Sort results by score in descending order
+            bug_report_to_ranked_results[bug_report_id] = sorted(results, key=lambda x: x['score'], reverse=True)
 
-                bug_report_to_scores[bug_report].append((filename, label, score))
-        
-    return bug_report_to_scores
+    return bug_report_to_ranked_results
 
-def compute_ranking_metrics(bug_report_to_scores, k_values=[1, 5, 10]):
+
+def compute_ranking_metrics(bug_report_to_ranked_results, k_values=[1, 5, 10]):
     '''
-    Compute ranking metrics for bug localization
+    Compute ranking metrics (top-k, MAP, MRR)
 
     Args:
-        bug_report_to_scores (dict): Bug report ID to list of (filename, label, score) tuples
-        k_values (list): Top-k values to compute accuracy for
+        bug_report_to_ranked_results (dict): Output of predict_and_rank()
+        k_values (list): List of Top-k values 
 
     Returns:
         tuple: (top-k accuracy dict, MAP score, MRR score)
@@ -368,32 +200,29 @@ def compute_ranking_metrics(bug_report_to_scores, k_values=[1, 5, 10]):
     ap_scores = []
     rr_scores = []
 
-    for bug_report, results in bug_report_to_scores.items():
-        # Sort by predicted bug score in descending order
-        results.sort(key=lambda x: x[2], reverse=True) 
-        filenames = [f for f, _, _ in results]
-        labels = [label for _, label, _ in results]
-        scores = [score for _, _, score in results]
+    for bug_report, results in bug_report_to_ranked_results.items():
+        ranked_labels = [item['label'] for item in results]
+        scores = [item['score'] for item in results]
 
         # top-k accuracy
         for k in k_values:
-            if k <= len(labels):
-                topk = labels[:k]
+            if k <= len(ranked_labels):
+                topk = ranked_labels[:k]
                 topk_accuracies[k].append(1 if 1 in topk else 0)  # 1 if at least one buggy file in top-k
 
         # MAP (mean average precision)
-        if sum(labels) > 0: # only if there are buggy files
-            ap_scores.append(average_precision_score(labels, scores))
+        if sum(ranked_labels) > 0: # only if there are buggy files
+            ap_scores.append(average_precision_score(ranked_labels, scores))
 
         # MRR (mean reciprocal rank)
         try:
-            first_hit = labels.index(1)
+            first_hit = ranked_labels.index(1)
             rr_scores.append(1.0 / (first_hit + 1))
         except ValueError:
             rr_scores.append(0.0)
 
     # Calculate final metrics
-    topk = {k: np.mean(topk_accuracies[k]) for k in k_values}
+    topk = {k: np.mean(topk_accuracies[k]) if topk_accuracies[k] else 0 for k in k_values}
     map_score = np.mean(ap_scores) if ap_scores else 0
     mrr_score = np.mean(rr_scores) if rr_scores else 0
 
@@ -418,120 +247,98 @@ def gcn_model():
 
     # Hyperparameters
     hidden_channels = 64
+    embedding_dim = 128 
     learning_rate = 0.01
     weight_decay = 5e-4
-    epochs = 50
+    file_pair_batch_size=16  # Define the batch size for file pairs
+    epochs = 2
 
-    # Check if dataset exists
-    if not os.path.exists(pickle_file):
-        logger.error(f"Dataset file not found: {pickle_file}")
+    train_dataset, val_dataset, test_dataset, vocab_size, bug_report_descriptions = prepare_dataset(data_folder_path, pickle_file)
+
+    if not all([train_dataset, val_dataset, test_dataset, vocab_size, bug_report_descriptions]):
+        logger.error("Failed to load dataset.")
         return 
     
-    # Extract all bug report IDs
-    logger.info("Extracting bug report IDs from dataset...")
-    all_bug_reports = set()
-    try:
-        with open(pickle_file, 'rb') as f:
-            # Try to determine the format of the pickle file
-            try:
-                first_entry = pickle.load(f)
-                f.seek(0)  # Reset file pointer
+    train_bug_ids = list(train_dataset.keys())
+    val_bug_ids = list(val_dataset.keys())
+    test_bug_ids = list(test_dataset.keys())
 
-                if isinstance(first_entry, dict):
-                    # Format: List of dictionaries
-                    dataset = pickle.load(f)
-                    for instance in dataset:
-                        br_id = instance.get("bug_report", "unknown")
-                        all_bug_reports.add(br_id)
-                else:
-                    # Format: Sequential entries
-                    while True:
-                        try:
-                            br_id, _, _, _ = pickle.load(f)
-                            all_bug_reports.add(br_id)
-                        except EOFError:
-                            break
-
-            except Exception as e:
-                logger.error(f"Error reading pickle file: {e}")
-                return 
-            
-    except Exception as e:
-        logger.error(f"Error opening pickle file: {e}")
-        return
-    
-    logger.info(f"Found {len(all_bug_reports)} unique bug reports")
-
-    # Split bug reports into train/val/test
-    train_ids, val_ids, test_ids = split_bug_reports(all_bug_reports)
-    logger.info(f"Split sizes - Train: {len(train_ids)}, Val: {len(val_ids)}, Test: {len(test_ids)}")
-
-    # Create datasets
-    logger.info("Creating datasets...")
-    try:
-        train_dataset = ASTBugReportDataset(root=data_folder_path, pickle_file=pickle_file, split_bug_ids=train_ids)
-        val_dataset = ASTBugReportDataset(root=data_folder_path, pickle_file=pickle_file, split_bug_ids=val_ids)
-        test_dataset = ASTBugReportDataset(root=data_folder_path, pickle_file=pickle_file, split_bug_ids=test_ids)
-    except Exception as e:
-        logger.error(f"Error creating datasets: {e}")
-        return
-    
-    # Create data loaders
-    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=32, shuffle=True)
-    test_loader = DataLoader(test_dataset, batch_size=32, shuffle=True)
-
-    # Initialize model
-    num_node_features = 1 # We're using a single integer index per node
-    model = GCN(num_node_features, hidden_channels=hidden_channels).to(device)
+    model = BugLocalizationModel(vocab_size, embedding_dim, 1, hidden_channels).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
 
-    # Training loop
-    logger.info("Starting training...")
-    best_val_acc = 0
+    # ----- Training Loop (Bug Report Centric) -----
+    logger.info("Starting training with bug report centric processing...")
+    best_val_mrr = 0.0
     best_model_state = None
 
-    for epoch in range(1, epochs+1):
-        # Train
-        train_loss, train_acc = train_model(model, train_loader, optimizer, device)
+    for epoch in range(1, epochs + 1):
+        model.train()
+        total_loss = 0
+        num_bug_reports_processed = 0
 
-        # Validate
-        val_acc, val_preds, val_targets = evaluate(model, val_loader, device)
+        for bug_report_id in tqdm(train_bug_ids, desc=f"Epoch {epoch}"):
+            bug_report_files = train_dataset.get(bug_report_id, [])
+            if not bug_report_files:
+                continue
 
-        logger.info(f"Epoch: {epoch:03d}, Train Loss: {train_loss:.4f}, Train Acc: {train_acc}, Val Acc: {val_acc:.4f}")
+            # Create a function to get tokenizes bug report for an ID
+            bug_report_tokens = get_bug_report_tokens(bug_report_id, bug_report_descriptions, tokenizer, device).unsequeeze(0)
 
-        # Save best model
-        if val_acc > best_val_acc:
-            best_val_acc = val_acc
+            num_files = len(bug_report_files)
+            for i in range(0, num_files, file_pair_batch_size):
+                batch_files = bug_report_files[i: i + file_pair_batch_size]
+                batch_ast_data = [file.to(device) for file in batch_files]
+
+                # Repeat bug report tokens for the batch size
+                batch_bug_report_tokens = bug_report_tokens.repeat(len(batch_files), 1)
+
+                # Create a PyTorch Geometric Batch object for the ASTs
+                batch_graph = Batch.from_data_list(batch_ast_data)
+                
+                # Forward pass
+                scores = model(batch_bug_report_tokens, batch_graph).squeeze()
+                labels = torch.cat([file.y for file in batch_files]).float().to(device)
+
+                # Calculate ranking loss 
+                loss = pairwise_ranking_loss(scores, labels)
+
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+
+                total_loss += loss.item() * len(batch_files)
+            
+            num_bug_reports_processed += 1 
+
+        avg_loss = total_loss / len(train_dataset) if len(train_dataset) > 0 else 0.0
+        logger.info(f"Epoch: {epoch:03d}, Train Loss: {avg_loss:.4f}")
+
+        # --- Validation ----
+        model.eval()
+        val_ranked_results = predict_and_rank(model, val_dataset, bug_report_descriptions, tokenizer, device)
+        topk_val, map_val, mrr_val = compute_ranking_metrics(val_ranked_results)
+        logger.info(f"Epoch: {epoch:03d}, Val MRR: {mrr_val:.4f}, Val MAP: {map_val:.4f}, Val Top@1: {topk_val.get(1,0):.4f}")
+
+        if mrr_val > best_val_mrr:
+            best_val_mrr = mrr_val
             best_model_state = model.state_dict().copy()
 
-    # Load best model for testing
+    # ---- Testing ----
     if best_model_state:
         model.load_state_dict(best_model_state)
-
-    # Test accuracy
-    test_acc, test_preds, test_targets = evaluate(model, test_loader, device)
-    logger.info(f"Test Accuracy: {test_acc:.4f}")
-
-    # Perform ranking evaluation
-    logger.info("Generating rankings for bug localization...")
-    bug_report_to_scores = predict_and_rank(model, test_loader, device)
-    
-    # Compute ranking metrics
-    topk, map_score, mrr_score = compute_ranking_metrics(bug_report_to_scores)
-
-    # Print ranking metrics
-    logger.info("Bug Localization Performance:")
-    for k, acc in topk.items():
+    model.eval()
+    test_ranked_results = predict_and_rank(model, test_dataset, bug_report_descriptions, tokenizer, device)
+    topk_test, map_test, mrr_test = compute_ranking_metrics(test_ranked_results)
+    logger.info("Test Bug Localization Performance:")
+    logger.info(f"MRR: {mrr_test: .4f}, MAP: {map_test: .4f}")
+    for k, acc in topk_test.items():
         logger.info(f"Top-{k} Accuracy: {acc:.4f}")
-    logger.info(f"Mean Average Precision (MAP): {map_score:.4f}")
-    logger.info(f"Mean Reciprocal Rank (MRR): {mrr_score:.4f}")
 
     # Save model
     output_dir = os.path.join(data_folder_path, "models")
     os.makedirs(output_dir, exist_ok=True)
     torch.save(model.state_dict(), os.path.join(output_dir, 'bug_localization_gnn.pt'))
-    logger.info(f"Model saved to {os.path.join(output_dir, "bug_localization_gn.py")}")
+    logger.info(f"Model saved to {os.path.join(output_dir, "bug_localization_gnn.pt")}")
 
 
-
+    
