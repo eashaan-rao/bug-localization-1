@@ -140,15 +140,15 @@ def codebert_finetune():
     # print(f"Number of rows in dataset_codebert.csv: {num_rows}")
 
     # Limit to 100 rows
-    df = df.head(100000)
-
+    # df = df.head(100000)
+    print("Dataset reading is done")
     # Split dataset into train/val
     train_df, val_df = train_test_split(df, test_size=0.1, random_state=42)
 
     # Create dataset and dataloaders
     train_dataset = BugLocalizationDataset(train_df, tokenizer)
     val_dataset = BugLocalizationDataset(val_df, tokenizer)
-
+    print("training dataset and validation dataset is created...")
     # Define Training Arguments
     training_args = TrainingArguments(
         output_dir=models_path,
@@ -182,6 +182,9 @@ def codebert_finetune():
         eval_dataset = val_dataset,
         data_collator = data_collator
     )
+
+    print("trainer and training arguments are defined...")
+    print("training starts now")
 
     # Start Fine-tuning
     trainer.train()

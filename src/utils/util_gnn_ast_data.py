@@ -113,26 +113,34 @@ def prepare_dataset(data_folder_path, pickle_file, cache_file="processed_data.pt
     
     try:
         with open(pickle_file, 'rb') as f:
-            dataset = pickle.load(f)
-            for instance in tqdm(dataset, desc="Processing Data"):
-                bug_report_desc =  instance["bug_report"]
-                filename = instance["filename"]
-                ast_dict = instance["ast_src_code"]
-                label = instance["label"]
+            all_processed_data = pickle.load(f)
+            if isinstance(all_processed_data, list):
+                for instance in tqdm(all_processed_data, desc="Processing Data"):
+                    if isinstance(instance, dict): # Ensure the element is a dictionary
+                        bug_report_desc =  instance.get("bug_report")
+                        filename = instance.get("filename")
+                        ast_dict = instance.get("ast_src_code")
+                        label = instance.get("label")
 
-                if bug_report_desc not in unique_bug_reports:
-                    unique_bug_reports[bug_report_desc] = next_bug_report_id
-                    bug_report_descriptions[next_bug_report_id] = bug_report_desc
-                    next_bug_report_id += 1
-                    all_bug_reports_texts.append(bug_report_desc)
+                        if bug_report_desc not in unique_bug_reports:
+                            unique_bug_reports[bug_report_desc] = next_bug_report_id
+                            bug_report_descriptions[next_bug_report_id] = bug_report_desc
+                            next_bug_report_id += 1
+                            all_bug_reports_texts.append(bug_report_desc)
                 
-                br_id = unique_bug_reports[bug_report_desc]
-                data = ast_to_pyg_graph(ast_dict)
-                data.y = torch.tensor([label], dtype=torch.long)
-                data.bug_report_id =  br_id
-                data.filename = filename
-                all_data_by_desc[bug_report_desc].append(data)
+                        br_id = unique_bug_reports[bug_report_desc]
+                        data = ast_to_pyg_graph(ast_dict)
+                        data.y = torch.tensor([label], dtype=torch.long)
+                        data.bug_report_id =  br_id
+                        data.filename = filename
+                        all_data_by_desc[bug_report_desc].append(data)
+                    else:
+                        logger.warning(f"Unexpected data type in processed data : {type(instance)}")
         
+            else:
+                logger.warning(f"Unexpected data type loaded from pickle: {type(all_processed_data)}")
+                return None, None, None, 0, None
+    
     except FileNotFoundError:
         logger.error(f"Dataset file not found: {pickle_file}")
         return None, None, None, 0, None

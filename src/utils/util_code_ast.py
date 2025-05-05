@@ -70,10 +70,10 @@ def ast_to_dict(node, source_code):
 
 def process_csv_to_ast(input_csv, output_pickle):
     '''
-    Process Java source codes into ASTs in chunks and store in Pickle format
+    Process Java source codes into ASTs and store as a single list in Pickle format
     '''
 
-    results = []
+    all_processed_data = []
     batch = 0
     chunk_size = 1000
     
@@ -92,19 +92,15 @@ def process_csv_to_ast(input_csv, output_pickle):
                 "ast_src_code": ast_representation,
                 "label": label
             })
+        all_processed_data.extend(batch_results)
+
         
-        # # Save as JSON
-        # with open(output_json, "w", encoding="utf-8") as f:
-        #     json.dump(results, f, indent=2)
-        # print(f"AST dataset saved to {output_json}")
-
-
-        # Save each batch incrementally 
-        with open(output_pickle, 'ab') as pickle_file:
-            pickle.dump(batch_results, pickle_file)
-
-        print(f"Processed batch {batch + 1}, saved {len(batch_results)} records to {output_pickle}")
+        print(f"Processed batch {batch + 1}, current total records: {len(all_processed_data)}")
         batch += 1
+
+    # Save the entire processed data as a single list
+    with open(output_pickle, 'ab') as pickle_file:
+        pickle.dump(all_processed_data, pickle_file)
 
     print(f"AST dataset saved to {output_pickle}")
 
@@ -114,5 +110,5 @@ def extract_src_to_ast():
     data_folder_path = os.path.join(parent_dir, 'data')
     dataset_filepath = os.path.join(data_folder_path, 'dataset_codebert.csv')
     # output_json_file = os.path.join(data_folder_path, 'ast_dataset.json')
-    output_pickle_file = os.path.join(data_folder_path, 'pickle_dataset.pkl')
+    output_pickle_file = os.path.join(data_folder_path, 'ast_dataset.pkl')
     process_csv_to_ast(dataset_filepath, output_pickle_file)
