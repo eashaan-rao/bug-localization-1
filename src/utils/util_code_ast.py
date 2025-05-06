@@ -28,7 +28,11 @@ def parse_java_code(source_code):
     '''
     tree = parser.parse(bytes(source_code, 'utf-8'))
     root_node = tree.root_node
-    return ast_to_dict(root_node, source_code)
+    ast_representation = ast_to_dict(root_node, source_code)
+    # Ensure the top level is a dictionary
+    if isinstance(ast_representation, list) and len(ast_representation) == 1:
+        return ast_representation[0]
+    return ast_representation
 
 def ast_to_dict(node, source_code):
     '''
@@ -50,7 +54,8 @@ def ast_to_dict(node, source_code):
     
     #  Skip the "program" node altogether as it is providing whole src code as text.
     if node.type == "program":
-        return [ast_to_dict(child, source_code) for child in node.children]
+        # Instead of returning a list, return a single dictionary with children
+        return {"type": "program_root", "children": [ast_to_dict(child, source_code) for child in node.children if ast_to_dict(child, source_code) is not None]}
     
     if node.type in EXCLUDED_NODE_TYPES:
         return None # Completely remove these nodes

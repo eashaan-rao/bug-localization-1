@@ -4,7 +4,7 @@ Code for training a GNN model for AST based source code for bug localization
 
 import torch
 from utils.util_gnn_ast_data import prepare_dataset
-from torch_geometric.nn import GCNConv, global_mean_pool
+from torch_geometric.nn import GCNConv, global_mean_pool, GATConv
 from torch_geometric.loader import DataLoader
 from torch_geometric.data import Batch
 import torch.nn.functional as F
@@ -17,6 +17,7 @@ import numpy as np
 from sklearn.metrics import average_precision_score
 import logging
 from transformers import AutoTokenizer
+import matplotlib.pyplot as plt
 
 # Initilaize tokenizer 
 tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
@@ -30,7 +31,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 class BugLocalizationModel(torch.nn.Module):
-    def __init__(self, vocab_size, embedding_dim, num_node_features, hidden_channels, dropout_rate=0.1):
+    def __init__(self, vocab_size, embedding_dim, num_node_features, hidden_channels, num_gnn_layers=3,
+                 gnn_dropout_rate=0.1, use_gat=False, num_attention_heads=1, dropout_rate=0.1):
         super(BugLocalizationModel, self).__init__()
         # Bug report text encoder
         self.embedding = torch.nn.Embedding(vocab_size, embedding_dim)
@@ -39,10 +41,12 @@ class BugLocalizationModel(torch.nn.Module):
         self.text_dropout = Dropout(dropout_rate)
 
         # Use GCN only for code representation
-        self.ast_encoder = GCN(num_node_features, hidden_channels, dropout_rate)
+        self.ast_encoder = GCN(num_node_features, hidden_channels, num_layers=num_gnn_layers, 
+                               dropout_rate=gnn_dropout_rate, use_gat=use_gat, num_attention_heads=num_attention_heads)
 
         # Combination and ranking components
-        self.combination_layer = torch.nn.Linear(hidden_channels *2, hidden_channels)
+        combination_input_dim = hidden_channels + (hidden_channels * num_attention_heads if use_gat else hidden_channels)
+        self.combination_layer = torch.nn.Linear(combination_input_dim, hidden_channels)
         self.comb_norm = LayerNorm(hidden_channels)
         self.comb_dropout = Dropout(dropout_rate)
         self.ranking_score = torch.nn.Linear(hidden_channels, 1)
@@ -72,32 +76,61 @@ class BugLocalizationModel(torch.nn.Module):
 
 # GCN model (Graph Classification) 
 class GCN(torch.nn.Module):
-    def __init__(self, num_node_features, hidden_channels, dropout_rate=0.1):
+    def __init__(self, num_node_features, hidden_channels, num_layers=3, dropout_rate=0.1, use_gat=False, num_attention_heads=1):
         """
-        Graph Convolution Network for Bug Localization.
+        Deeper Graph Convolution Network with option for GAT (Graph Attention layers) for Bug Localization.
 
         Args:
-            num_node_featires (int): Dimension of node features
-            hidden_channels (int): Dimension of hidden layers
-            num_classes (int): Number of output classes (default: 2 for buggy vs non_buggy)
+            um_node_features (int): Dimension of node features.
+            hidden_channels (int): Dimension of hidden layers.
+            num_layers (int): Number of GCN/GAT layers. Default is 3.
+            dropout_rate (float): Dropout probability. Default is 0.1.
+            use_gat (bool): Whether to use GATConv layers instead of GCNConv. Default is False.
+            num_attention_heads (int): Number of attention heads if using GAT. Default is 1.
         """
         super(GCN, self).__init__()
-        self.conv1 = GCNConv(num_node_features, hidden_channels)
-        self.norm1 = LayerNorm(hidden_channels)
-        self.conv2 = GCNConv(hidden_channels, hidden_channels)
-        self.norm2 = LayerNorm(hidden_channels)
+        self.num_layers = num_layers
         self.dropout = Dropout(dropout_rate)
+        self.convs = torch.nn.ModuleList()
+        self.norms = torch.nn.ModuleList()
+        self.use_gat = use_gat
+        self.num_attention_heads = num_attention_heads
+
+        if use_gat:
+            self.convs.append(GATConv(num_node_features, hidden_channels, heads=num_attention_heads))
+        else:
+            self.convs.append(GCNConv(num_node_features, hidden_channels))
+        self.norms.append(LayerNorm(hidden_channels * num_attention_heads if use_gat else hidden_channels))
+
+        for _ in range(num_layers - 1):
+            if use_gat:
+                self.convs.append(GATConv(hidden_channels * num_attention_heads, hidden_channels, heads=num_attention_heads))
+            else:
+                self.convs.append(GCNConv(hidden_channels, hidden_channels))
+            self.norms.append(LayerNorm(hidden_channels * num_attention_heads if use_gat else hidden_channels))
+            
+        # self.conv1 = GCNConv(num_node_features, hidden_channels)
+        # self.norm1 = LayerNorm(hidden_channels)
+        # self.conv2 = GCNConv(hidden_channels, hidden_channels)
+        # self.norm2 = LayerNorm(hidden_channels)
+        # self.dropout = Dropout(dropout_rate)
         # No classification layer needed
 
     def forward(self, x, edge_index, batch):
-        # First graph conv layer
-        x = self.conv1(x, edge_index)
-        x = F.relu(x)
-        x = self.dropout(x)
+        for i in range(self.num_layers):
+            x = self.convs[i](x, edge_index)
+            x = F.relu(self.norms[i](x))
+            x = self.dropout(x)
+        
 
-        # Second graph conv layer
-        x = self.conv2(x, edge_index)
-        x = F.relu(self.norm2(x))
+        # # First graph conv layer
+        # x = self.conv1(x, edge_index)
+        # x = F.relu(x)
+        # x = self.dropout(x)
+
+        # # Second graph conv layer
+        # x = self.conv2(x, edge_index)
+        # x = F.relu(self.norm2(x))
 
         # global mean pooling to get graph-level representation
         x = global_mean_pool(x, batch)
@@ -135,7 +168,7 @@ def pairwise_ranking_loss(scores, labels, margin=1.0):
     Returns:
         torch.Tensor: The pairwise ranking loss
     '''
-    loss = torch.Tensor(0.0, requires_grad=True, device=scores.device)
+    loss = torch.tensor(0.0, requires_grad=True, device=scores.device)
     positive_indices = (labels == 1).nonzero(as_tuple=True)[0]
     negative_indices = (labels == 0).nonzero(as_tuple=True)[0]
 
@@ -228,6 +261,68 @@ def compute_ranking_metrics(bug_report_to_ranked_results, k_values=[1, 5, 10]):
 
     return topk, map_score, mrr_score
 
+def visualize_metrics(train_losses, val_mrrs, val_maps, val_top1s, val_top5s, val_top10s, epochs):
+    """
+    Visualizes the training loss and validation metrics over epochs.
+
+    Args:
+        train_losses (list): List of training losses per epoch.
+        val_mrrs (list): List of validation MRR per epoch.
+        val_maps (list): List of validation MAP per epoch.
+        val_top1s (list): List of validation Top@1 accuracy per epoch.
+        val_top5s (list): List of validation Top@5 accuracy per epoch.
+        val_top10s (list): List of validation Top@10 accuracy per epoch.
+        epochs (int): Total number of epochs.
+    """
+    epochs_range = range(1, epochs + 1)
+
+    plt.figure(figsize=(12, 10))
+
+    plt.subplot(3, 2, 1)
+    plt.plot(epochs_range, train_losses, label='Train Loss')
+    plt.title('Training Loss')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.legend()
+
+    plt.subplot(3, 2, 2)
+    plt.plot(epochs_range, val_mrrs, label='Val MRR', color='orange')
+    plt.title('Validation MRR')
+    plt.xlabel('Epoch')
+    plt.ylabel('MRR')
+    plt.legend()
+
+    plt.subplot(3, 2, 3)
+    plt.plot(epochs_range, val_maps, label='Val MAP', color='green')
+    plt.title('Validation MAP')
+    plt.xlabel('Epoch')
+    plt.ylabel('MAP')
+    plt.legend()
+
+    plt.subplot(3, 2, 4)
+    plt.plot(epochs_range, val_top1s, label='Val Top@1', color='red')
+    plt.title('Validation Top@1 Accuracy')
+    plt.xlabel('Epoch')
+    plt.ylabel('Accuracy')
+    plt.legend()
+
+    plt.subplot(3, 2, 5)
+    plt.plot(epochs_range, val_top5s, label='Val Top@5', color='purple')
+    plt.title('Validation Top@5 Accuracy')
+    plt.xlabel('Epoch')
+    plt.ylabel('Accuracy')
+    plt.legend()
+
+    plt.subplot(3, 2, 6)
+    plt.plot(epochs_range, val_top10s, label='Val Top@10', color='brown')
+    plt.title('Validation Top@10 Accuracy')
+    plt.xlabel('Epoch')
+    plt.ylabel('Accuracy')
+    plt.legend()
+
+    plt.tight_layout()
+    plt.show()
+    plt.savefig('gcn_model.png')  # Or choose your desired filename and format
 
 
 # Training and evaluation
@@ -243,15 +338,20 @@ def gcn_model():
     current_dir = os.path.dirname(__file__)
     parent_dir = os.path.abspath(os.path.join(current_dir, os.pardir, os.pardir))
     data_folder_path = os.path.join(parent_dir, 'data')
-    pickle_file = os.path.join(data_folder_path, 'pickle_dataset.pkl')
+    pickle_file = os.path.join(data_folder_path, 'ast_dataset.pkl')
 
     # Hyperparameters
     hidden_channels = 64
     embedding_dim = 128 
-    learning_rate = 0.01
+    learning_rate = 0.001
     weight_decay = 5e-4
     file_pair_batch_size=16  # Define the batch size for file pairs
-    epochs = 2
+    epochs = 20
+    num_gnn_layers = 4
+    gnn_dropout_rate = 0.2
+    use_gat = True
+    num_attention_heads = 2
+    dropout_rate = 0.1
 
     train_dataset, val_dataset, test_dataset, vocab_size, bug_report_descriptions = prepare_dataset(data_folder_path, pickle_file)
 
@@ -263,11 +363,20 @@ def gcn_model():
     val_bug_ids = list(val_dataset.keys())
     test_bug_ids = list(test_dataset.keys())
 
-    model = BugLocalizationModel(vocab_size, embedding_dim, 1, hidden_channels).to(device)
+    model = BugLocalizationModel(vocab_size, embedding_dim, 1, hidden_channels, num_gnn_layers, gnn_dropout_rate,
+                                 use_gat, num_attention_heads, dropout_rate).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
 
     # ----- Training Loop (Bug Report Centric) -----
     logger.info("Starting training with bug report centric processing...")
+    # Lists to store metrics for visualization
+    train_losses = []
+    val_mrrs = []
+    val_maps = []
+    val_top1s = []
+    val_top5s = []
+    val_top10s = []
+
     best_val_mrr = 0.0
     best_model_state = None
 
@@ -282,7 +391,7 @@ def gcn_model():
                 continue
 
             # Create a function to get tokenizes bug report for an ID
-            bug_report_tokens = get_bug_report_tokens(bug_report_id, bug_report_descriptions, tokenizer, device).unsequeeze(0)
+            bug_report_tokens = get_bug_report_tokens(bug_report_id, bug_report_descriptions, tokenizer, device).unsqueeze(0)
 
             num_files = len(bug_report_files)
             for i in range(0, num_files, file_pair_batch_size):
@@ -312,12 +421,18 @@ def gcn_model():
 
         avg_loss = total_loss / len(train_dataset) if len(train_dataset) > 0 else 0.0
         logger.info(f"Epoch: {epoch:03d}, Train Loss: {avg_loss:.4f}")
+        train_losses.append(avg_loss)
 
         # --- Validation ----
         model.eval()
         val_ranked_results = predict_and_rank(model, val_dataset, bug_report_descriptions, tokenizer, device)
         topk_val, map_val, mrr_val = compute_ranking_metrics(val_ranked_results)
         logger.info(f"Epoch: {epoch:03d}, Val MRR: {mrr_val:.4f}, Val MAP: {map_val:.4f}, Val Top@1: {topk_val.get(1,0):.4f}")
+        val_mrrs.append(mrr_val)
+        val_maps.append(map_val)
+        val_top1s.append(topk_val.get(1, 0))
+        val_top5s.append(topk_val.get(5, 0))
+        val_top10s.append(topk_val.get(10, 0))
 
         if mrr_val > best_val_mrr:
             best_val_mrr = mrr_val
@@ -333,6 +448,8 @@ def gcn_model():
     logger.info(f"MRR: {mrr_test: .4f}, MAP: {map_test: .4f}")
     for k, acc in topk_test.items():
         logger.info(f"Top-{k} Accuracy: {acc:.4f}")
+
+    visualize_metrics(train_losses, val_mrrs, val_maps, val_top1s, val_top5s, val_top10s, epochs)
 
     # Save model
     output_dir = os.path.join(data_folder_path, "models")
