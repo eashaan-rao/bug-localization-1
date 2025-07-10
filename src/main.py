@@ -13,7 +13,10 @@ from utils.util_code_ast import extract_src_to_ast
 from utils.util_code_cpg import extract_src_to_cpg
 
 # Step 1: Extract Features from the Eclipse_Platform_UI.txt
-# extract_features()
+extract_features("aspectj")
+
+
+
 # Extract dataset for fine tuning code bert
 # prepare_dataset_for_codebert()
 
@@ -27,7 +30,7 @@ from utils.util_code_cpg import extract_src_to_cpg
 # extract_src_to_cpg()
 
 # GNN based ast representation bug localization
-gcn_model()
+# gcn_model()
 
 # BLs model
 # 1. rvsm model

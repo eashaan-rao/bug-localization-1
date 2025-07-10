@@ -3,6 +3,7 @@
 /data/dataset
 .venv/
 /data/features.csv
+/data/aspectj_features.csv
 /data/dataset_codebert.csv
 /data/ast_dataset.json
 /data/cpg_dataset.pkl

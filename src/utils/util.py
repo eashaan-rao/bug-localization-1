@@ -128,25 +128,78 @@ def xlsx2dict(xlsx_path):
     Arguments:
         xlsx_path {String} -- path of xlsx file
     '''
-
+    # Dynamically determine the project name and repository directory from the input file path
     current_dir = os.path.dirname(__file__)
     parent_dir = os.path.abspath(os.path.join(current_dir, os.pardir, os.pardir))
     data_folder_path = os.path.join(parent_dir, 'data')
-    repo_dir = os.path.join(data_folder_path, "eclipse.platforn.ui")
-    repo_bundles_dir = os.path.join(repo_dir, 'bundles')
+    
 
-    # Read the excel file
-    df = pd.read_excel(xlsx_path, dtype=str) # Read all values as string to handle inconsistencies
-    dict_list = []
+    # Assumes projecct name is the basename of the xlsx file without extension
+    # e.g. /path/to/data/dataset/AspectJ.xlsx -> AspectJ
+    project_name = os.path.splitext(os.path.basename(xlsx_path))[0]
+    repo_dir = os.path.join(data_folder_path, project_name)
 
-    # Iterate through the rows to convert them to dictionaries
-    for _, line in df.iterrows():
-        # Extract valid Java files, removing prefixes like "6:"
-        if pd.notna(line["files"]): # Check if "files" column is not empty
-            processed_files = []
-            # Regex pattern to match valid files paths ending with .java
-            pattern = r'\b'
+    # repo_bundles_dir = os.path.join(repo_dir, 'bundles')
+    try:
+        df = pd.read_excel(xlsx_path, dtype=str)
+        # Normalize columns names (e.g., 'Bug ID' -> 'bug_id) for consistency
+        df.columns = df.columns.str.strip().str.lower().str.replace(' ', '_')
+    except FileNotFoundError:
+        print(f"Error: The file was not found at {xlsx_path}")
+        return []
+    except Exception as e:
+        print(f"Error reading Excel file {xlsx_path}: {e}")
+        return []
+    
+    # Replace pandas NaN values with empty strings for safer processing
+    df = df.fillna('')
+    dict_list = [] 
 
+    # Define the fields we expect to keep
+    expected_fields = ["id", "bug_id", "summary", "description", "report_time", "report_timestamp", "status", "commit", "commit_timestamp", "files"]
+
+    for _, row in df.iterrows():
+        line = row.to_dict()
+
+        # 1. Process 'files' column to extract and normalize Java file paths
+        processed_files = []
+        if line.get("files"):
+            pattern = r'\b(?:[a-zA-Z0-9\-\._]+\/)+[a-zA-Z0-9\-\._]+\.java\b'
+            matches = re.findall(pattern, str(line["files"]))
+
+            for f in matches:
+                # Create a full, normalized to the file
+                full_path = os.path.normpath(os.path.join(repo_dir, f.strip()))
+                processed_files.append(full_path)
+        line['files'] = processed_files
+
+        # 2. Combine 'summary' and 'description' into a single 'raw_text' field
+        summary = line.get("summary","").strip()
+        description = line.get("description", "").strip()
+        line['raw_text'] =  f"{summary} {description}".strip()
+
+        # 3. Safely convert 'report_time' string to a datetime object
+        report_time_str = line.get("report_time")
+        if report_time_str:
+            try:
+                # Use pandas to_datetime which is robust to different formats
+                line['report_time'] = pd.to_datetime(report_time_str, errors='coerce')
+                # If conversion fails (NaT), set to None for consistency
+                if pd.isna(line["report_time"]):
+                    line["report_time"] = None
+            except Exception:
+                line["report_time"] = None
+        else:
+            line["report_time"] = None
+
+        # 4. Create the final dictionary with only the required keys
+        filtered_line = {key: line.get(key) for key in expected_fields}
+        filtered_line['raw_text'] = line["raw_text"]
+
+        dict_list.append(filtered_line)
+    
+    return dict_list
+ 
 def csv2dict(csv_path):
     '''
     Converts a comma separated values (csv) file into a dictionary

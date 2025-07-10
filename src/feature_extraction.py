@@ -30,6 +30,16 @@ from datetime import datetime
 import subprocess
 from tqdm import tqdm
 
+PROJECT_REPO_MAPPING = {
+    "aspectj": "https://github.com/eclipse-aspectj/aspectj.git",
+    "jdt": "https://github.com/eclipse-jdt/eclipse.jdt.ui.git",
+    "swt": "https://github.com/eclipse-platform/eclipse.platform.swt.git",
+    "birt": "https://github.com/eclipse-birt/birt.git",
+    "tomcat": "https://github.com/apache/tomcat.git",
+    "eclipse_platform_ui": "https://github.com/eclipse-platform/eclipse.platform.ui.git"
+    
+}
+
 # Helper functions
 
 class CodeTimer:
@@ -187,15 +197,23 @@ def compute_features(bug_reports, br_id, file, br_text, src, label):
 
     return [br_id, file, rvsm, cfs, cns, bfr, bff, cbs, label]
 
-def extract_features():
+def extract_features(project_name):
     '''
     Main pipeline for feature extraction. Clones the repository, reads bug reports,
     groups bug reports by commit, checks out the repository at the relevant commits,
     and extracts features only for the relevant Java files.
+
+    Args:
+        project_name(str) : The name of the project (e.g. 'AspectJ' or 'JDT')
     '''
 
+    if project_name not in PROJECT_REPO_MAPPING:
+        print(f"Error: Project '{project_name}' is not defined in PROJECT_REPO_MAPPING")
+        print("Please add the project and its repository URL to the mapping.")
+        return
+
     # Keep time while extracting features
-    with CodeTimer("Feature Extraction"):
+    with CodeTimer(f"Feature Extraction for {project_name}"):
 
         # Get the current directory (assuming the script is in the src folder)
         current_dir = os.path.dirname(__file__)
@@ -207,29 +225,32 @@ def extract_features():
         data_folder_path = os.path.join(parent_dir, 'data')
 
          # Define the path to the repository's bundles folder (this can change when you checkout different commits)
-        repo_dir = os.path.join(data_folder_path, "eclipse.platform.ui")
-        repo_bundles_dir = os.path.join(repo_dir, 'bundles')
-
+        repo_url =  PROJECT_REPO_MAPPING[project_name]
+        repo_dir = os.path.join(data_folder_path, project_name)
 
         # Clone git repo to a local folder
-        git_clone(
-            repo_url = "https://github.com/eclipse-platform/eclipse.platform.ui.git",
-            clone_folder = data_folder_path,
-        )
+        if os.path.exists(repo_dir):
+            print(f"Path already exists: {repo_dir}")
+            print("Not cloning the repository....")
+        else:
+            git_clone(
+                repo_url = repo_url,
+                clone_folder = data_folder_path,
+            )
 
-        # Read bug reports from tab separated file
-        file_path = os.path.join(data_folder_path, 'Eclipse_Platform_UI.txt')
-        bug_reports = tsv2dict(file_path)
+        # Read bug reports from the corresponding .xlsx file in the 'dataset' subfolder
+        xlsx_file_path = os.path.join(parent_dir, 'dataset', f'{project_name}.xlsx')
+        bug_reports = xlsx2dict(xlsx_file_path)
 
         # Sort bug reports by commit_timestamp (or report time) so that we can process in chronological order
         bug_reports.sort(key=lambda br: float(br["commit_timestamp"]) if br["commit_timestamp"] else 0)
-        # exit(0) b 
+        # exit(0) 
         # Group bug reports by the commit hash.
         commit_groups = defaultdict(list)
         for br in bug_reports:
-            commit_sha = br["commit"]
+            commit_sha = br.get("commit")
             if not commit_sha:
-                print(f"No commit SHA found for bug report ID {br['id']}. Skipping")
+                print(f"No commit SHA found for bug report ID {br.get('id')}. Skipping")
                 continue
             commit_groups[commit_sha].append(br)
         
@@ -238,8 +259,10 @@ def extract_features():
         all_features = []
         indexed_non_buggy = {}
         skipping_count = 0
+
         # Process each group: checkout the commit once and then extract features for each bug report.
-        for commit_sha, group in tqdm(commit_groups.items(), desc="Processin Commits", unit="commit", total=len(commit_groups)):
+        desc = f"Processing Commits for {project_name}"
+        for commit_sha, group in tqdm(commit_groups.items(), desc=desc, unit="commit"):
             # print(f"Processing group for commit {commit_sha} with {len(group)} bug reports.")
 
             # Get the parent commit to extract the buggy version
@@ -247,14 +270,10 @@ def extract_features():
                 print(f"Skipping commit {commit_sha} due to checkout failures")
                 continue
 
-            buggy_files = set()
-            for br in group:
-                if "files" in br and br["files"]:
-                    for file in br["files"]:  
-                        buggy_files.add(file)
+            buggy_files = {file for br in group if br.get("files") for file in br["files"]}
 
             non_buggy_files = {
-                f for f in get_all_java_files(repo_bundles_dir) if f not in buggy_files
+                f for f in get_all_java_files(repo_dir) if f not in buggy_files
             }
             for f in non_buggy_files:
                     if f not in indexed_non_buggy:
@@ -268,9 +287,11 @@ def extract_features():
                     continue
                 all_features.extend(features)
             if all_features:
-                save_features_to_csv(all_features, os.path.join(data_folder_path, 'features.csv'))
+                output_path = os.path.join(data_folder_path, f'{project_name}_features.csv')
+                save_features_to_csv(all_features, output_path)
     print("skipping count: ", skipping_count)
-    print(f"Feature extraction complete. Features saved to {os.path.join(data_folder_path, 'features.csv')}")
+    final_output_path = os.path.join(data_folder_path, f'{project_name}_features.csv')
+    print(f"Feature extraction complete. Features saved to {final_output_path}")
 
 def save_features_to_csv(features, path):
     '''
