@@ -4,6 +4,10 @@
 .venv/
 /data/features.csv
 /data/aspectj_features.csv
+/data/birt_features.csv
+/data/jdt_features.csv
+/data/swt_features.csv
+/data/tomcat_features.csv
 /data/dataset_codebert.csv
 /data/ast_dataset.json
 /data/cpg_dataset.pkl

@@ -164,7 +164,7 @@ def xlsx2dict(xlsx_path):
         # 1. Process 'files' column to extract and normalize Java file paths
         processed_files = []
         if line.get("files"):
-            pattern = r'\b(?:[a-zA-Z0-9\-\._]+\/)+[a-zA-Z0-9\-\._]+\.java\b'
+            pattern = r'[\w\s./\\-]*?\.java'
             matches = re.findall(pattern, str(line["files"]))
 
             for f in matches:
