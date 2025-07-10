@@ -155,19 +155,20 @@ def train_dnn(i, num_folds, df, start, end, sample_dict, bug_reports, br2files_d
     MRR = calculate_MRR(test_bug_reports, sample_dict, br2files_dict, clf=clf)
     return acc_dict, MAP, MRR
 
-def dnn_model_kfold(k=10, data_folder='data', file_name='features.csv', n_jobs=-2, random_state=42):
+def dnn_model_kfold(project_name, k=10, data_folder='data', n_jobs=-2, random_state=42):
     '''
     Run k-fold cross validation in parallel
 
     Arguments:
+    project_name {str} -- the name of project under consideration.
     k {integer} -- the number of folds (default: {10})
     data_folder {str} -- folder containing the features file
-    file_name {str} -- name of the features file (default file: 'features.csv')
     n_jobs {integer} -- number of CPU cores to use (default: all but one)
     random_state {integer} -- random state for reproducibility (default: 42)
     '''
     current_dir = os.path.dirname(__file__)
     parent_dir = os.path.abspath(os.path.join(current_dir, os.pardir))
+    file_name = f"{project_name}_features.csv"
     file_path = os.path.join(parent_dir, data_folder, file_name)
     
     if not os.path.isfile(file_path):

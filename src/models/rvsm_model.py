@@ -4,13 +4,13 @@ import os
 
 
 
-def rvsm_model(data_folder_path=None):
+def rvsm_model(project_name, data_folder_path=None):
     if data_folder_path is None:
         current_dir = os.path.dirname(__file__)
         parent_dir = os.path.abspath(os.path.join(current_dir, os.pardir))
         data_folder_path = os.path.join(parent_dir, 'data')
     
-    file_path = os.path.join(data_folder_path, 'features.csv')
+    file_path = os.path.join(data_folder_path, f'{project_name}_features.csv')
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"File not found: {file_path}")
     

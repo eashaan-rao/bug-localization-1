@@ -16,10 +16,11 @@ from utils.util_metrics import topK_accuracy, calculate_MAP, calculate_MRR, help
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning)
 
-def lambdaMART(data_folder='data', file_name='features.csv'):
+def lambdaMART(project_name, data_folder='data'):
     # Extracting the file path
     current_dir = os.path.dirname(__file__)
     parent_dir = os.path.abspath(os.path.join(current_dir, os.pardir, os.pardir))
+    file_name = f"{project_name}_features.csv"
     file_path = os.path.join(parent_dir, data_folder, file_name)
 
     if not os.path.isfile(file_path):

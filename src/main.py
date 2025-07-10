@@ -15,34 +15,32 @@ from utils.util_code_cpg import extract_src_to_cpg
 # Step 1: Extract Features from the Eclipse_Platform_UI.txt
 extract_features("aspectj")
 
+# Step 2: rvsm model
+print(rvsm_model("aspectj"))
 
+# Step 3: DNN-MLP Model
+print(dnn_model_kfold("aspectj"))
 
-# Extract dataset for fine tuning code bert
-# prepare_dataset_for_codebert()
+# Step 4: LambdaMART Model
+print(lambdaMART("aspectj"))
 
-# Finetune the codebert
-# codebert_finetune()
+# Step 5: DNN model with custom loss
+print(train_dnn_with_custom_loss("aspectj"))
 
-# Convert src code to ast
-# extract_src_to_ast()
+# Step 6: Extract dataset for fine tuning code bert
+prepare_dataset_for_codebert()
 
-# Convert src code to cpg
-# extract_src_to_cpg()
+# Step 7: Finetune the codebert
+codebert_finetune()
 
-# GNN based ast representation bug localization
-# gcn_model()
+# Step 8: Convert src code to ast
+extract_src_to_ast()
 
-# BLs model
-# 1. rvsm model
-# print(rvsm_model())
+# Step 9: Convert src code to cpg
+extract_src_to_cpg()
 
-# 2. dnn model
-# print(dnn_model_kfold(10))
+# Step 10: NN based ast representation bug localization
+gcn_model()
 
-# 3. LambdaMART
-# print(lambdaMART())
-
-# 4. DNN model with custom loss
-# print(train_dnn_with_custom_loss())
 
 
