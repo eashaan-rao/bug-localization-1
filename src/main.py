@@ -13,34 +13,46 @@ from utils.util_code_ast import extract_src_to_ast
 from utils.util_code_cpg import extract_src_to_cpg
 
 # Step 1: Extract Features from the Eclipse_Platform_UI.txt
-extract_features("aspectj")
+# extract_features("tomcat")
 
 # Step 2: rvsm model
-print(rvsm_model("aspectj"))
+print("-"*60)
+print("RVSM Model")
+print(rvsm_model("tomcat"))
+print("-"*60)
 
 # Step 3: DNN-MLP Model
-print(dnn_model_kfold("aspectj"))
+print("-"*60)
+print("DNN-MLP Model")
+print(dnn_model_kfold("tomcat"))
+print("-"*60)
 
 # Step 4: LambdaMART Model
-print(lambdaMART("aspectj"))
+print("-"*60)
+print("LambdaMART")
+print(lambdaMART("tomcat"))
+print("-"*60)
 
 # Step 5: DNN model with custom loss
-print(train_dnn_with_custom_loss("aspectj"))
+print("-"*60)
+print("DNN with custom loss Model")
+print(train_dnn_with_custom_loss("tomcat"))
+print("-"*60)
 
 # Step 6: Extract dataset for fine tuning code bert
 prepare_dataset_for_codebert()
 
-# Step 7: Finetune the codebert
-codebert_finetune()
+# # Step 7: Finetune the codebert
+# codebert_finetune()
 
-# Step 8: Convert src code to ast
-extract_src_to_ast()
+# # Step 8: Convert src code to ast
+# extract_src_to_ast()
 
-# Step 9: Convert src code to cpg
-extract_src_to_cpg()
+# # Step 9: Convert src code to cpg
+# extract_src_to_cpg()
 
-# Step 10: NN based ast representation bug localization
-gcn_model()
+# # Step 10: NN based ast representation bug localization
+# gcn_model()
 
 
 

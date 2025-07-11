@@ -78,7 +78,7 @@ def lambdaMART(project_name, data_folder='data'):
 
 
         # Prepare dictionaries for evaluation
-        sample_dict, bug_reports, br2files_dict = helper_collections(X_test)
+        sample_dict, bug_reports, br2files_dict = helper_collections(X_test, project_name)
 
         # Calculate metrics
         acc_dict = topK_accuracy(bug_reports, sample_dict, br2files_dict, model)

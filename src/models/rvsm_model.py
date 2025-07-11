@@ -7,7 +7,7 @@ import os
 def rvsm_model(project_name, data_folder_path=None):
     if data_folder_path is None:
         current_dir = os.path.dirname(__file__)
-        parent_dir = os.path.abspath(os.path.join(current_dir, os.pardir))
+        parent_dir = os.path.abspath(os.path.join(current_dir, os.pardir, os.pardir))
         data_folder_path = os.path.join(parent_dir, 'data')
     
     file_path = os.path.join(data_folder_path, f'{project_name}_features.csv')
@@ -23,7 +23,7 @@ def rvsm_model(project_name, data_folder_path=None):
 
     # These collections are speed up the process while calculating top-k accuracy
     try:
-        sample_dict, bug_reports, br2files_dict = helper_collections(df, True)
+        sample_dict, bug_reports, br2files_dict = helper_collections(df, project_name, only_rvsm=True)
     except Exception as e:
         raise
 

@@ -218,7 +218,7 @@ def train_dnn_with_custom_loss(project_name, data_folder = 'data'):
             relevancy_dict[bug_id][file] = predictions[i]
 
         # Calculate metrics
-        sample_dict, bug_reports, br2files_dict = helper_collections(X_test_df)
+        sample_dict, bug_reports, br2files_dict = helper_collections(X_test_df, project_name)
         acc_dict, MAP, MRR = unified_topK_MAP_MRR(
             bug_reports,
             sample_dict,

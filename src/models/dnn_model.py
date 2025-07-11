@@ -167,7 +167,7 @@ def dnn_model_kfold(project_name, k=10, data_folder='data', n_jobs=-2, random_st
     random_state {integer} -- random state for reproducibility (default: 42)
     '''
     current_dir = os.path.dirname(__file__)
-    parent_dir = os.path.abspath(os.path.join(current_dir, os.pardir))
+    parent_dir = os.path.abspath(os.path.join(current_dir, os.pardir, os.pardir))
     file_name = f"{project_name}_features.csv"
     file_path = os.path.join(parent_dir, data_folder, file_name)
     
@@ -177,7 +177,7 @@ def dnn_model_kfold(project_name, k=10, data_folder='data', n_jobs=-2, random_st
     df = pd.read_csv(file_path)
 
     # These collections are speed up the process while calculating top-k accuracy
-    sample_dict, bug_reports, br2files_dict = helper_collections(df)
+    sample_dict, bug_reports, br2files_dict = helper_collections(df,project_name)
 
     # Ensure reproducible shuffling
     df = df.sample(frac=1, random_state=random_state).reset_index(drop=True)

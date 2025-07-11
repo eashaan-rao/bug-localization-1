@@ -4,15 +4,16 @@ A helper file contanining methods to calculate all the metrics for a bug localiz
 
 import os
 import numpy as np
-from utils.util import tsv2dict
+from utils.util import xlsx2dict
 from lightgbm import LGBMRanker
 
-def helper_collections(samples_df, only_rvsm=False):
+def helper_collections(samples_df, project_name, only_rvsm=False):
     '''
     Generates helper function for calculations
 
     Arguments:
         samples_df {pd.DataFrame} -- Dataframe containing samples from features.csv
+        project_name {str} -- The name of the project (e.g., "aspectj", "jdt").
 
     keyword Arguments:
         only_rvsm {bool} -- If True only 'rvsm' features are added to 'sample_dict'. (default: {False}) 
@@ -40,10 +41,10 @@ def helper_collections(samples_df, only_rvsm=False):
 
     current_dir = os.path.dirname(__file__)
     parent_dir = os.path.abspath(os.path.join(current_dir, os.pardir, os.pardir))
-    data_folder_path = os.path.join(parent_dir, 'data')
-    file_path = os.path.join(data_folder_path, 'Eclipse_Platform_UI.txt')
+    dataset_folder_path = os.path.join(parent_dir, 'dataset')
+    file_path = os.path.join(dataset_folder_path, f'{project_name}.xlsx')
     
-    bug_reports = tsv2dict(file_path)
+    bug_reports = xlsx2dict(file_path)
     br2files_dict = {}
 
     for bug_report in bug_reports:

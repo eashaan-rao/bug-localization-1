@@ -1,5 +1,9 @@
 /data/eclipse.platform.ui
 /data/aspectj/
+/data/birt/
+/data/jdt/
+/data/swt/
+/data/tomcat/
 /data/Eclipse_Platform_UI.txt
 /data/dataset
 .venv/
