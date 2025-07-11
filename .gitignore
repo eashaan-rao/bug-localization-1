@@ -8,7 +8,6 @@
 /data/dataset
 .venv/
 /data/features.csv
-/data/aspectj_features.csv
 /data/birt_features.csv
 /data/jdt_features.csv
 /data/swt_features.csv
