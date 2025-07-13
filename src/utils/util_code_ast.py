@@ -6,7 +6,10 @@ import os
 import pickle
 import pandas as pd
 from tqdm import tqdm
+import sys
 
+# Increase the recursion limit for deep ASTs
+sys.setrecursionlimit(3000)
 
 # JAVA_LANGUAGE = '/home/user/CS21D002_A_Eashaan_Rao/Research/Bug_Localization_Replication/tree-sitter-java'
 # Language.build_library(
@@ -34,10 +37,17 @@ def parse_java_code(source_code):
         return ast_representation[0]
     return ast_representation
 
-def ast_to_dict(node, source_code):
+def ast_to_dict(node, source_code, depth=0):
     '''
     Convert Tree-sitter AST to a dictionary format.
     '''
+    # 1. A manual depth limit to prevent crashes. this is a safety check.
+    MAX_DEPTH = 1000
+
+    if depth > MAX_DEPTH:
+        # Instead of crashing, return a placeholder node and stop going deeper.
+        return {"type": "error", "text": "MAX_DEPTH_REACHED"}
+
     # Nodes to be completely excluded
     EXCLUDED_NODE_TYPES = {".", ",", "{", "}", "(", ")", "*", "package", "import", 
                            "block_comment", "line_comment", "asterisk", "="}
@@ -54,8 +64,11 @@ def ast_to_dict(node, source_code):
     
     #  Skip the "program" node altogether as it is providing whole src code as text.
     if node.type == "program":
-        # Instead of returning a list, return a single dictionary with children
-        return {"type": "program_root", "children": [ast_to_dict(child, source_code) for child in node.children if ast_to_dict(child, source_code) is not None]}
+        # FIX: Call ast_to_dict only ONCE per child for efficiency.
+        # Pass the incremented depth to the recursive call.
+        children = [ast_to_dict(child, source_code, depth+1) for child in node.children]
+        # Filter out the None results afterwards
+        return {"type": "program_root", "children": [child for child in children if child is not None]}
     
     if node.type in EXCLUDED_NODE_TYPES:
         return None # Completely remove these nodes
@@ -64,12 +77,13 @@ def ast_to_dict(node, source_code):
     if node.type not in INCLUDE_NODE_EXCLUDE_TEXT:
         ast_dict["text"] = source_code[node.start_byte:node.end_byte].strip()
 
-    children = [ast_to_dict(child, source_code) for child in node.children]
-    children = [child for child in children if child is not None] # Remove None entries
-
-    # Recursively process children
+    # Fix: Same efficiency improvement here like in program
     if node.children:
-        ast_dict["children"] = children
+        # Pass the incremented depth here as well.
+        children = [ast_to_dict(child, source_code, depth+1) for child in node.children]
+        # Filter the list of results, not by re-running the function
+        ast_dict["children"] = [child for child in children if child is not None] # Remove None entries
+
     return ast_dict
 
 
@@ -86,7 +100,7 @@ def process_csv_to_ast(input_csv, output_pickle):
         batch_results = []
         for _, row in tqdm(chunk.iterrows(), total=len(chunk), desc=f"Processing Batch {batch + 1}"):
             bug_report = row['bug_report']
-            filename = row['file name']
+            filename = row['file_name']
             src_code = row['source_code']
             label = row['label']
 
@@ -104,16 +118,26 @@ def process_csv_to_ast(input_csv, output_pickle):
         batch += 1
 
     # Save the entire processed data as a single list
-    with open(output_pickle, 'ab') as pickle_file:
+    with open(output_pickle, 'wb') as pickle_file:
         pickle.dump(all_processed_data, pickle_file)
 
     print(f"AST dataset saved to {output_pickle}")
 
-def extract_src_to_ast():
+def extract_src_to_ast(project_name):
+    '''
+    Main function to process a project's dataset into ASTs.
+    '''
+    print(f" Starting AST extraction for project: {project_name}...")
     current_dir = os.path.dirname(__file__)
     parent_dir = os.path.abspath(os.path.join(current_dir, os.pardir, os.pardir))
     data_folder_path = os.path.join(parent_dir, 'data')
-    dataset_filepath = os.path.join(data_folder_path, 'dataset_codebert.csv')
+
+    # Define dynamic paths based on the project name
+    dataset_filepath = os.path.join(data_folder_path, f'{project_name}_codebert_dataset.csv')
     # output_json_file = os.path.join(data_folder_path, 'ast_dataset.json')
-    output_pickle_file = os.path.join(data_folder_path, 'ast_dataset.pkl')
+    output_pickle_file = os.path.join(data_folder_path, f'{project_name}_ast_dataset.pkl')
+
+    print(f"Input dataset: {dataset_filepath}")
+    print(f"Output pickle file: {output_pickle_file}")
+
     process_csv_to_ast(dataset_filepath, output_pickle_file)

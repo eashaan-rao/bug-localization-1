@@ -36,8 +36,7 @@ PROJECT_REPO_MAPPING = {
     "swt": "https://github.com/eclipse-platform/eclipse.platform.swt.git",
     "birt": "https://github.com/eclipse-birt/birt.git",
     "tomcat": "https://github.com/apache/tomcat.git",
-    "eclipse_platform_ui": "https://github.com/eclipse-platform/eclipse.platform.ui.git"
-    
+    "eclipse_platform_ui": "https://github.com/eclipse-platform/eclipse.platform.ui.git" 
 }
 
 # Helper functions

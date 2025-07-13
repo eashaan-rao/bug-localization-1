@@ -19,8 +19,11 @@ import logging
 from transformers import AutoTokenizer
 import matplotlib.pyplot as plt
 
+
 # Initilaize tokenizer 
 tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
+# 1. Fix: Get the correct vocabulary size directly from the tokenizer
+vocab_size = tokenizer.vocab_size
 
 # Set up logging
 logging.basicConfig(
@@ -261,7 +264,7 @@ def compute_ranking_metrics(bug_report_to_ranked_results, k_values=[1, 5, 10]):
 
     return topk, map_score, mrr_score
 
-def visualize_metrics(train_losses, val_mrrs, val_maps, val_top1s, val_top5s, val_top10s, epochs):
+def visualize_metrics(train_losses, val_mrrs, val_maps, val_top1s, val_top5s, val_top10s, epochs, project_name):
     """
     Visualizes the training loss and validation metrics over epochs.
 
@@ -280,72 +283,75 @@ def visualize_metrics(train_losses, val_mrrs, val_maps, val_top1s, val_top5s, va
 
     plt.subplot(3, 2, 1)
     plt.plot(epochs_range, train_losses, label='Train Loss')
-    plt.title('Training Loss')
+    plt.title(f'Training Loss for {project_name}')
     plt.xlabel('Epoch')
     plt.ylabel('Loss')
     plt.legend()
 
     plt.subplot(3, 2, 2)
     plt.plot(epochs_range, val_mrrs, label='Val MRR', color='orange')
-    plt.title('Validation MRR')
+    plt.title(f'Validation MRR for {project_name}')
     plt.xlabel('Epoch')
     plt.ylabel('MRR')
     plt.legend()
 
     plt.subplot(3, 2, 3)
     plt.plot(epochs_range, val_maps, label='Val MAP', color='green')
-    plt.title('Validation MAP')
+    plt.title(f'Validation MAP for {project_name}')
     plt.xlabel('Epoch')
     plt.ylabel('MAP')
     plt.legend()
 
     plt.subplot(3, 2, 4)
     plt.plot(epochs_range, val_top1s, label='Val Top@1', color='red')
-    plt.title('Validation Top@1 Accuracy')
+    plt.title(f'Validation Top@1 Accuracy for {project_name}')
     plt.xlabel('Epoch')
     plt.ylabel('Accuracy')
     plt.legend()
 
     plt.subplot(3, 2, 5)
     plt.plot(epochs_range, val_top5s, label='Val Top@5', color='purple')
-    plt.title('Validation Top@5 Accuracy')
+    plt.title(f'Validation Top@5 Accuracy for {project_name}')
     plt.xlabel('Epoch')
     plt.ylabel('Accuracy')
     plt.legend()
 
     plt.subplot(3, 2, 6)
     plt.plot(epochs_range, val_top10s, label='Val Top@10', color='brown')
-    plt.title('Validation Top@10 Accuracy')
+    plt.title(f'Validation Top@10 Accuracy for {project_name}')
     plt.xlabel('Epoch')
     plt.ylabel('Accuracy')
     plt.legend()
 
     plt.tight_layout()
+    output_filename = f"{project_name}_gcn_metrics.png"
+    plt.savefig(output_filename)  # Or choose your desired filename and format
     plt.show()
-    plt.savefig('gcn_model.png')  # Or choose your desired filename and format
+    
 
 
 # Training and evaluation
-def gcn_model():
+def gcn_model(project_name):
     '''
     Main function to train and evaluate the bug localization model.
     '''
     # Configuration
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     logger.info(f"Using device: {device}")
+    logger.info(f" Starting GNN Model Training for project: {project_name}")
 
     # Paths
     current_dir = os.path.dirname(__file__)
     parent_dir = os.path.abspath(os.path.join(current_dir, os.pardir, os.pardir))
     data_folder_path = os.path.join(parent_dir, 'data')
-    pickle_file = os.path.join(data_folder_path, 'ast_dataset.pkl')
+    # pickle_file = os.path.join(data_folder_path, 'ast_dataset.pkl')
 
     # Hyperparameters
     hidden_channels = 64
     embedding_dim = 128 
     learning_rate = 0.001
     weight_decay = 5e-4
-    file_pair_batch_size=16  # Define the batch size for file pairs
+    file_pair_batch_size=8  # Define the batch size for file pairs
     epochs = 20
     num_gnn_layers = 4
     gnn_dropout_rate = 0.2
@@ -353,12 +359,22 @@ def gcn_model():
     num_attention_heads = 2
     dropout_rate = 0.1
 
-    train_dataset, val_dataset, test_dataset, vocab_size, bug_report_descriptions = prepare_dataset(data_folder_path, pickle_file)
+    processed_data = prepare_dataset(project_name)
 
-    if not all([train_dataset, val_dataset, test_dataset, vocab_size, bug_report_descriptions]):
+    # train_dataset, val_dataset, test_dataset, vocab_size, bug_report_descriptions = prepare_dataset(project_name)
+
+    if not processed_data:
         logger.error("Failed to load dataset.")
         return 
     
+    train_dataset = processed_data['train_data']
+    val_dataset = processed_data['val_data']
+    test_dataset = processed_data['test_data']
+   
+    # we are using bug_report_map to get description, assuming it maps description to ID
+    # to get ID -> description, we need to invert it.
+    bug_report_id_to_desc = {v: k for k, v in processed_data['bug_report_map'].items()}
+
     train_bug_ids = list(train_dataset.keys())
     val_bug_ids = list(val_dataset.keys())
     test_bug_ids = list(test_dataset.keys())
@@ -391,7 +407,7 @@ def gcn_model():
                 continue
 
             # Create a function to get tokenizes bug report for an ID
-            bug_report_tokens = get_bug_report_tokens(bug_report_id, bug_report_descriptions, tokenizer, device).unsqueeze(0)
+            bug_report_tokens = get_bug_report_tokens(bug_report_id, bug_report_id_to_desc, tokenizer, device).unsqueeze(0)
 
             num_files = len(bug_report_files)
             for i in range(0, num_files, file_pair_batch_size):
@@ -425,7 +441,7 @@ def gcn_model():
 
         # --- Validation ----
         model.eval()
-        val_ranked_results = predict_and_rank(model, val_dataset, bug_report_descriptions, tokenizer, device)
+        val_ranked_results = predict_and_rank(model, val_dataset, bug_report_id_to_desc, tokenizer, device)
         topk_val, map_val, mrr_val = compute_ranking_metrics(val_ranked_results)
         logger.info(f"Epoch: {epoch:03d}, Val MRR: {mrr_val:.4f}, Val MAP: {map_val:.4f}, Val Top@1: {topk_val.get(1,0):.4f}")
         val_mrrs.append(mrr_val)
@@ -442,20 +458,22 @@ def gcn_model():
     if best_model_state:
         model.load_state_dict(best_model_state)
     model.eval()
-    test_ranked_results = predict_and_rank(model, test_dataset, bug_report_descriptions, tokenizer, device)
+    test_ranked_results = predict_and_rank(model, test_dataset, bug_report_id_to_desc, tokenizer, device)
     topk_test, map_test, mrr_test = compute_ranking_metrics(test_ranked_results)
     logger.info("Test Bug Localization Performance:")
     logger.info(f"MRR: {mrr_test: .4f}, MAP: {map_test: .4f}")
     for k, acc in topk_test.items():
         logger.info(f"Top-{k} Accuracy: {acc:.4f}")
 
-    visualize_metrics(train_losses, val_mrrs, val_maps, val_top1s, val_top5s, val_top10s, epochs)
+    visualize_metrics(train_losses, val_mrrs, val_maps, val_top1s, val_top5s, val_top10s, epochs, project_name)
 
     # Save model
     output_dir = os.path.join(data_folder_path, "models")
     os.makedirs(output_dir, exist_ok=True)
-    torch.save(model.state_dict(), os.path.join(output_dir, 'bug_localization_gnn.pt'))
-    logger.info(f"Model saved to {os.path.join(output_dir, "bug_localization_gnn.pt")}")
+    model_filename = f"{project_name}_bl_gnn.pt"
+    model_save_path = os.path.join(output_dir, model_filename)
+    torch.save(model.state_dict(), model_save_path)
+    logger.info(f"Model saved to {model_save_path}")
 
 
     

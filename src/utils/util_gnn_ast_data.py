@@ -95,99 +95,165 @@ def split_bug_reports(all_bug_reports, ratios=(0.7, 0.15, 0.15), seed=42):
         all_bug_reports[n_train+n_val:]
     )
 
-def prepare_dataset(data_folder_path, pickle_file, cache_file="processed_data.pt"):
-    # Check if the cache of the pickle dataset exists - if yes, return the data from this cache data.
+def prepare_dataset(project_name):
+    '''
+    Prepares the graph dataset for a specific project
+    '''
+    print(f"Preparing GNN dataset for project: {project_name}")
+    current_dir = os.path.dirname(__file__)
+    parent_dir = os.path.abspath(os.path.join(current_dir, os.pardir, os.pardir))
+    data_folder_path = os.path.join(parent_dir, 'data')
+
+    # Define dynamic paths based on the project name
+    pickle_file = os.path.join(data_folder_path, f"{project_name}_ast_dataset.pkl")
+    cache_file = f"{project_name}_processed_data.pt"
     cache_data_path = os.path.join(data_folder_path, cache_file)
+
     if os.path.exists(cache_data_path):
         logger.info(f"Loading processed data from cache: {cache_file}")
-        cached_data = torch.load(cache_data_path, weights_only=False)
-        return cached_data['train_data'], cached_data['val_data'], cached_data['test_data'], cached_data['vocab_size'], cached_data['bug_report_descriptions']
+        return torch.load(cache_data_path, weights_only=False)
     
-    # Extract all bug report information
     logger.info(f"Processing dataset from {pickle_file}")
-    all_data_by_desc = defaultdict(list)
-    bug_report_descriptions = {}
-    unique_bug_reports = {}
-    next_bug_report_id = 0
-    all_bug_reports_texts = []
+    all_data_by_desc, bug_report_map, all_bug_texts = defaultdict(list), {}, []
     
     try:
         with open(pickle_file, 'rb') as f:
             all_processed_data = pickle.load(f)
-            if isinstance(all_processed_data, list):
-                for instance in tqdm(all_processed_data, desc="Processing Data"):
-                    if isinstance(instance, dict): # Ensure the element is a dictionary
-                        bug_report_desc =  instance.get("bug_report")
-                        filename = instance.get("filename")
-                        ast_dict = instance.get("ast_src_code")
-                        label = instance.get("label")
+        for instance in tqdm(all_processed_data, desc="Processing ASTs into Graphs"):
+            if not isinstance(instance, dict):
+                logger.warning(f"Skipping non-dictionary instance: {type(instance)}")
+                continue
 
-                        if isinstance(ast_dict, dict):  # Ensure AST is a dict
-                            if bug_report_desc not in unique_bug_reports:
-                                unique_bug_reports[bug_report_desc] = next_bug_report_id
-                                bug_report_descriptions[next_bug_report_id] = bug_report_desc
-                                next_bug_report_id += 1
-                                all_bug_reports_texts.append(bug_report_desc)
-                    
-                            br_id = unique_bug_reports[bug_report_desc]
-                            data = ast_to_pyg_graph(ast_dict)
-                            data.y = torch.tensor([label], dtype=torch.long)
-                            data.bug_report_id =  br_id
-                            data.filename = filename
-                            all_data_by_desc[bug_report_desc].append(data)
-                        else:
-                            logger.warning(f"AST is not a dictionary for instance: {filename}, type: {type(ast_dict)}")
-                    else:
-                        logger.warning(f"Unexpected data type in processed data (expecting dict): {type(instance)}, value: {instance}")
+            bug_report_desc = instance.get("bug_report")
+            
+            bug_report_desc = instance.get("bug_report")
         
-            else:
-                logger.warning(f"Unexpected data type loaded from pickle (expecting list): {type(all_processed_data)}")
-                return None, None, None, 0, None
-    
-    except FileNotFoundError:
-        logger.error(f"Dataset file not found: {pickle_file}")
-        return None, None, None, 0, None
-    except Exception as e:
-        logger.error(f"Error Processing pickle file: {e}")
-        return None, None, None, 0, None
-    
-    all_bug_report_ids = list(range(next_bug_report_id))
-    train_ids, val_ids, test_ids = split_bug_reports(all_bug_report_ids)
+            # ‼️ FIX: Add check to handle malformed bug_report field and prevent TypeError
+            if not isinstance(bug_report_desc, str):
+                logger.warning(f"Skipping record with malformed bug_report field (expected str, got {type(bug_report_desc)})")
+                continue
 
-    train_data = {br_id: [] for br_id in train_ids}
-    val_data = {br_id: [] for br_id in val_ids}
-    test_data = {br_id: [] for br_id in test_ids}
+            if bug_report_desc not in bug_report_map:
+                bug_report_map[bug_report_desc] = len(bug_report_map)
+                all_bug_texts.append(bug_report_desc)
+            
+            data = ast_to_pyg_graph(instance["ast_src_code"])
+            data.y = torch.tensor([instance["label"]], dtype=torch.long)
+            data.bug_report_id = bug_report_map[bug_report_desc]
+            data.filename = instance["filename"]
+            all_data_by_desc[bug_report_desc].append(data)
+    except FileNotFoundError:
+        logger.error(f"AST pickle file not found: {pickle_file}. Please run the AST extraction script first.")
+        raise
+
+    train_ids, val_ids, test_ids = split_bug_reports(list(bug_report_map.values()))
+    train_data, val_data, test_data = {}, {}, {}
 
     for desc, data_list in all_data_by_desc.items():
-        br_id = unique_bug_reports[desc]
-        if br_id in train_ids:
-            train_data[br_id].extend(data_list)
-        elif br_id in val_ids:
-            val_data[br_id].extend(data_list)
-        elif br_id in test_ids:
-            test_data[br_id].extend(data_list)
+        br_id = bug_report_map[desc]
+        if br_id in train_ids: train_data.setdefault(br_id, []).extend(data_list)
+        elif br_id in val_ids: val_data.setdefault(br_id, []).extend(data_list)
+        else: test_data.setdefault(br_id, []).extend(data_list)
 
-    # Create vocabulary from all bug report texts
-    all_tokens = [token for text in all_bug_reports_texts for token in text.split()]
-    vocab = {token: i for i, token in enumerate(sorted(list(set(all_tokens))))}
-    vocab_size = len(vocab)
-    logger.info(f"Vocabulary size of bug reports: {vocab_size}")
-
-    num_node_features = 1
-    logger.info(f"Number of node features: {num_node_features}")
+    # all_tokens = [token for text in all_bug_texts for token in text.split()]
+    # vocab_size = len(set(all_tokens))
+    # logger.info(f"Vocabulary size of bug reports: {vocab_size}")
 
     processed_data_to_save = {
-        'train_data': train_data,
-        'val_data': val_data,
-        'test_data': test_data,
-        'vocab_size': vocab_size,
-        'bug_report_descriptions': bug_report_descriptions
+        'train_data': train_data, 'val_data': val_data, 'test_data': test_data,
+         'bug_report_map': bug_report_map
     }
 
     torch.save(processed_data_to_save, cache_data_path)
     logger.info(f"Processed data saved to cache: {cache_file}")
 
-    return train_data, val_data, test_data, vocab_size, bug_report_descriptions
+    return processed_data_to_save
+    
+    # # Extract all bug report information
+    # logger.info(f"Processing dataset from {pickle_file}")
+    # all_data_by_desc = defaultdict(list)
+    # bug_report_descriptions = {}
+    # unique_bug_reports = {}
+    # next_bug_report_id = 0
+    # all_bug_reports_texts = []
+    
+    # try:
+    #     with open(pickle_file, 'rb') as f:
+    #         all_processed_data = pickle.load(f)
+    #         if isinstance(all_processed_data, list):
+    #             for instance in tqdm(all_processed_data, desc="Processing Data"):
+    #                 if isinstance(instance, dict): # Ensure the element is a dictionary
+    #                     bug_report_desc =  instance.get("bug_report")
+    #                     filename = instance.get("filename")
+    #                     ast_dict = instance.get("ast_src_code")
+    #                     label = instance.get("label")
+
+    #                     if isinstance(ast_dict, dict):  # Ensure AST is a dict
+    #                         if bug_report_desc not in unique_bug_reports:
+    #                             unique_bug_reports[bug_report_desc] = next_bug_report_id
+    #                             bug_report_descriptions[next_bug_report_id] = bug_report_desc
+    #                             next_bug_report_id += 1
+    #                             all_bug_reports_texts.append(bug_report_desc)
+                    
+    #                         br_id = unique_bug_reports[bug_report_desc]
+    #                         data = ast_to_pyg_graph(ast_dict)
+    #                         data.y = torch.tensor([label], dtype=torch.long)
+    #                         data.bug_report_id =  br_id
+    #                         data.filename = filename
+    #                         all_data_by_desc[bug_report_desc].append(data)
+    #                     else:
+    #                         logger.warning(f"AST is not a dictionary for instance: {filename}, type: {type(ast_dict)}")
+    #                 else:
+    #                     logger.warning(f"Unexpected data type in processed data (expecting dict): {type(instance)}, value: {instance}")
+        
+    #         else:
+    #             logger.warning(f"Unexpected data type loaded from pickle (expecting list): {type(all_processed_data)}")
+    #             return None, None, None, 0, None
+    
+    # except FileNotFoundError:
+    #     logger.error(f"Dataset file not found: {pickle_file}")
+    #     return None, None, None, 0, None
+    # except Exception as e:
+    #     logger.error(f"Error Processing pickle file: {e}")
+    #     return None, None, None, 0, None
+    
+    # all_bug_report_ids = list(range(next_bug_report_id))
+    # train_ids, val_ids, test_ids = split_bug_reports(all_bug_report_ids)
+
+    # train_data = {br_id: [] for br_id in train_ids}
+    # val_data = {br_id: [] for br_id in val_ids}
+    # test_data = {br_id: [] for br_id in test_ids}
+
+    # for desc, data_list in all_data_by_desc.items():
+    #     br_id = unique_bug_reports[desc]
+    #     if br_id in train_ids:
+    #         train_data[br_id].extend(data_list)
+    #     elif br_id in val_ids:
+    #         val_data[br_id].extend(data_list)
+    #     elif br_id in test_ids:
+    #         test_data[br_id].extend(data_list)
+
+    # # Create vocabulary from all bug report texts
+    # all_tokens = [token for text in all_bug_reports_texts for token in text.split()]
+    # vocab = {token: i for i, token in enumerate(sorted(list(set(all_tokens))))}
+    # vocab_size = len(vocab)
+    # logger.info(f"Vocabulary size of bug reports: {vocab_size}")
+
+    # num_node_features = 1
+    # logger.info(f"Number of node features: {num_node_features}")
+
+    # processed_data_to_save = {
+    #     'train_data': train_data,
+    #     'val_data': val_data,
+    #     'test_data': test_data,
+    #     'vocab_size': vocab_size,
+    #     'bug_report_descriptions': bug_report_descriptions
+    # }
+
+    # torch.save(processed_data_to_save, cache_data_path)
+    # logger.info(f"Processed data saved to cache: {cache_file}")
+
+    # return train_data, val_data, test_data, vocab_size, bug_report_descriptions
 
             
    

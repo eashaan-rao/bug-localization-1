@@ -4,10 +4,12 @@
 /data/jdt/
 /data/swt/
 /data/tomcat/
+/data/eclipse.platform.ui
 /data/Eclipse_Platform_UI.txt
 /data/dataset
 .venv/
 /data/features.csv
+/data/aspectj_features.csv
 /data/birt_features.csv
 /data/jdt_features.csv
 /data/swt_features.csv
@@ -25,6 +27,7 @@ __pycache__/
 *.bin
 *.pkl
 *.pt
+*.csv
 
 # ignore cython compiled files
 *.cypthon-*
