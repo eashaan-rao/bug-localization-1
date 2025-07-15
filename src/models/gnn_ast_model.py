@@ -355,7 +355,7 @@ def gcn_model(project_name):
     epochs = 20
     num_gnn_layers = 4
     gnn_dropout_rate = 0.2
-    use_gat = True
+    use_gat = False
     num_attention_heads = 2
     dropout_rate = 0.1
 
@@ -470,7 +470,7 @@ def gcn_model(project_name):
     # Save model
     output_dir = os.path.join(data_folder_path, "models")
     os.makedirs(output_dir, exist_ok=True)
-    model_filename = f"{project_name}_bl_gnn.pt"
+    model_filename = f"{project_name}_bl_gnn_gcn.pt"
     model_save_path = os.path.join(output_dir, model_filename)
     torch.save(model.state_dict(), model_save_path)
     logger.info(f"Model saved to {model_save_path}")

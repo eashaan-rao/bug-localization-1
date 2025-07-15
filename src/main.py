@@ -43,16 +43,16 @@ from utils.util_code_cpg import extract_src_to_cpg
 # prepare_dataset_for_codebert("eclipse_platform_ui")
 
 # # Step 7: Finetune the codebert
-codebert_finetune("eclipse_platform_ui")
+# codebert_finetune("eclipse_platform_ui")
 
 # # Step 8: Convert src code to ast
-# extract_src_to_ast("aspectj")
+# extract_src_to_ast("eclipse_platform_ui")
 
 # # Step 9: Convert src code to cpg
 # extract_src_to_cpg()
 
 # # Step 10: NN based ast representation bug localization
-# gcn_model("jdt")
+gcn_model("birt")
 
 
 
