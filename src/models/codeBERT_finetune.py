@@ -27,6 +27,11 @@ logging.get_logger("transformers").setLevel(logging.ERROR) # also set the loggin
 tokenizer = RobertaTokenizer.from_pretrained("microsoft/codebert-base")
 model = RobertaForSequenceClassification.from_pretrained("microsoft/codebert-base", num_labels=2)
 
+print("\nFreezing the base model layers and training only the classification head...")
+# Freeze all the parameters of the base RoBERTa model
+for param in model.roberta.parameters():
+    param.requires_grad = False
+
 CHUNK_SIZE = 512
 MAX_BUG_REPORT_TOKENS = 256
 MAX_SRC_CHUNK_TOKENS = 256

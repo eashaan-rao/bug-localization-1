@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 import os
 from tqdm import tqdm
+from sklearn.inspection import permutation_importance
 
 def oversample(train_samples):
     '''
@@ -149,6 +150,25 @@ def train_dnn(i, num_folds, df, start, end, sample_dict, bug_reports, br2files_d
     for i in tqdm(range(num_folds), desc="Folds", unit="fold"):
         print(f"Training Fold {i + 1} / {num_folds}", flush=True)
         clf.fit(X_train, y_train.ravel())
+
+        # In train_dnn function, after clf.fit(...)
+
+    
+
+    print("\nCalculating Feature Importance...")
+    # We need a held-out validation set for this, or we can use the test set.
+    # Let's assume we have X_test, y_test from the k-fold split.
+    result = permutation_importance(
+        clf, X_train, y_train, n_repeats=10, random_state=42, n_jobs=2
+    )
+
+    # Get the feature names in the correct order
+    feature_names = ['rVSM_similarity', 'collab_filter', 'classname_similarity', 'bug_recency', 'bug_frequency']
+
+    print("Feature Importances:")
+    for i, name in enumerate(feature_names):
+        # Print the mean importance and standard deviation across repeats
+        print(f"  {name}: {result.importances_mean[i]:.3f} +/- {result.importances_std[i]:.3f}")
 
     acc_dict = topK_accuracy(test_bug_reports, sample_dict, br2files_dict, clf=clf)
     MAP = calculate_MAP(test_bug_reports, sample_dict, br2files_dict, clf=clf)

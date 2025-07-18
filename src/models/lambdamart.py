@@ -76,7 +76,6 @@ def lambdaMART(project_name, data_folder='data'):
 
         model.fit(X_train_features.values, y_train, group=train_group)
 
-
         # Prepare dictionaries for evaluation
         sample_dict, bug_reports, br2files_dict = helper_collections(X_test, project_name)
 
@@ -92,6 +91,26 @@ def lambdaMART(project_name, data_folder='data'):
         fold_time = time.time() - start_time  # Time taken for this fold
 
         tqdm.write(f"Fold {fold+1}/{gkf.get_n_splits()} | X_train: {X_train.shape}, X_test: {X_test.shape} | Time: {fold_time:.2f}s")
+    
+    print("\n" + "="*40)
+    print("Analyzing Feature Importance from Last Fold's Model")
+    print("="*40)
+
+    # The 'model' variable holds the trained model from the last fold
+    # The 'feature_cols' variable holds the names of your features
+
+    # 1. Extract feature importances and names
+    feature_importance_values = model.feature_importances_
+
+    # 2. Create a DataFrame for better visualization
+    importance_df = pd.DataFrame({
+        'Feature': feature_cols,
+        'Importance': feature_importance_values
+    }).sort_values(by='Importance', ascending=False)
+
+    print("\nFeature Importances:")
+    print(importance_df)
+
     
     # Averaging metrics over all folds
     avg_acc_dict = {k: round(np.mean([d[k] for d in acc_dicts]).item(), 3) for k in acc_dicts[0].keys()}
